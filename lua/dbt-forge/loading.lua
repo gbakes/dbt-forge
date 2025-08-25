@@ -83,7 +83,7 @@ function M.start_rotation()
         return
     end
 
-    M.current_loading.timer = vim.fn.timer_start(2000, function()
+    local function update_message()
         if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
             return
         end
@@ -105,11 +105,24 @@ function M.start_rotation()
             "",
         }
 
-        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
-        vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
-        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
-        
-    end, { ["repeat"] = -1 })
+        vim.schedule(function()
+            if M.current_loading and vim.api.nvim_buf_is_valid(M.current_loading.buf) then
+                vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
+                vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
+                vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
+            end
+        end)
+
+        -- Schedule next update
+        if M.current_loading then
+            M.current_loading.timer = vim.loop.new_timer()
+            M.current_loading.timer:start(2000, 0, update_message)
+        end
+    end
+
+    -- Start first update
+    M.current_loading.timer = vim.loop.new_timer()
+    M.current_loading.timer:start(2000, 0, update_message)
 end
 
 function M.hide_loading()
@@ -119,7 +132,8 @@ function M.hide_loading()
 
     -- Stop timer
     if M.current_loading.timer then
-        vim.fn.timer_stop(M.current_loading.timer)
+        M.current_loading.timer:stop()
+        M.current_loading.timer:close()
     end
 
     -- Close window
