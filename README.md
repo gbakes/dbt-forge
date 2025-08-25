@@ -15,13 +15,14 @@ A Neovim plugin for DBT (Data Build Tool) development that allows you to run, te
 
 ```lua
 {
-  "gbakes/dbt-forge.nvim",
-  config = function()
-    require("dbt-forge").setup({
-      -- Configuration options here
-    })
-  end,
-  ft = "sql", -- Load only for SQL files
+    "gbakes/dbt-forge.nvim",
+    url = "https://github.com/gbakes/dbt-forge.git",
+    config = function()
+        require("dbt-forge").setup({
+        -- Configuration options here
+        })
+    end,
+    ft = "sql", -- Load only for SQL files
 }
 ```
 
@@ -42,9 +43,10 @@ use {
 
 ```lua
 require("dbt-forge").setup({
-  dbt_project_path = "/path/to/your/dbt/project", -- Required
-  python_env_manager = "pyenv", -- "pyenv", "conda", or "venv"
-  python_env_name = "your-env-name", -- Environment name
+  -- Not required but can be used to override
+  -- dbt_project_path = "/path/to/your/dbt/project",
+  -- python_env_manager = "pyenv",
+  -- python_env_name = "your-env-name",
   keymaps = {
     run_model = "<leader>dr",
     transpile_model = "<leader>dt",
@@ -82,4 +84,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT
-

@@ -1,6 +1,6 @@
 local M = {}
 
-M.funny_messages = {
+M.messages = {
     "Diving the stakeholder's requirements",
     "Seancing the project documentation",
     "Reading the stakeholder requirements tea leaves",
@@ -30,7 +30,7 @@ function M.show_loading(title)
 
     -- Calculate width based on longest message + padding
     local max_msg_len = 0
-    for _, msg in ipairs(M.funny_messages) do
+    for _, msg in ipairs(M.messages) do
         max_msg_len = math.max(max_msg_len, #msg)
     end
     local width = math.min(math.max(max_msg_len + 4, 50), math.floor(vim.o.columns * 0.8))
@@ -52,10 +52,10 @@ function M.show_loading(title)
 
     local win = vim.api.nvim_open_win(buf, false, opts)
 
-    local message_index = math.random(#M.funny_messages)
+    local message_index = math.random(#M.messages)
     local content = {
         "",
-        "  " .. M.funny_messages[message_index],
+        "  " .. M.messages[message_index],
         "",
         "  ⏳ Working...",
         "",
@@ -89,11 +89,11 @@ function M.start_rotation()
         end
 
         M.current_loading.message_index = M.current_loading.message_index + 1
-        if M.current_loading.message_index > #M.funny_messages then
+        if M.current_loading.message_index > #M.messages then
             M.current_loading.message_index = 1
         end
 
-        local new_message = M.funny_messages[M.current_loading.message_index]
+        local new_message = M.messages[M.current_loading.message_index]
 
         if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
             vim.api.nvim_win_close(M.current_loading.win, true)
@@ -119,7 +119,7 @@ function M.start_rotation()
 
         -- Calculate width based on longest message + padding
         local max_msg_len = 0
-        for _, msg in ipairs(M.funny_messages) do
+        for _, msg in ipairs(M.messages) do
             max_msg_len = math.max(max_msg_len, #msg)
         end
         local width = math.min(math.max(max_msg_len + 4, 50), math.floor(vim.o.columns * 0.8))
