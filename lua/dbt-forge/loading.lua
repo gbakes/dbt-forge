@@ -85,7 +85,7 @@ function M.start_rotation()
 
     local function update_message()
         -- Check if loading is still active
-        if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
+        if not M.current_loading then
             return
         end
 
@@ -98,7 +98,19 @@ function M.start_rotation()
         local new_message = M.funny_messages[M.current_loading.message_index]
         print("Updating to message: " .. new_message) -- Debug print
         
-        -- Update content
+        -- Close old window and buffer
+        if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
+            vim.api.nvim_win_close(M.current_loading.win, true)
+        end
+        if M.current_loading.buf and vim.api.nvim_buf_is_valid(M.current_loading.buf) then
+            vim.api.nvim_buf_delete(M.current_loading.buf, { force = true })
+        end
+
+        -- Create new buffer and window with updated message
+        local buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
+        vim.api.nvim_buf_set_option(buf, "swapfile", false)
+
         local content = {
             "",
             "  " .. new_message,
@@ -107,13 +119,34 @@ function M.start_rotation()
             "",
         }
 
-        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
-        vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
-        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
-        
-        -- Force redraw to ensure UI updates
-        vim.cmd("redraw!")
-        print("Buffer updated and redrawn") -- Debug print
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
+        vim.api.nvim_buf_set_option(buf, "modifiable", false)
+
+        -- Same window options as before
+        local width = 50
+        local height = 8
+        local row = math.floor((vim.o.lines - height) / 2)
+        local col = math.floor((vim.o.columns - width) / 2)
+
+        local opts = {
+            relative = "editor",
+            width = width,
+            height = height,
+            row = row,
+            col = col,
+            border = "rounded",
+            title = " DBT Forge ",
+            title_pos = "center",
+            style = "minimal"
+        }
+
+        local win = vim.api.nvim_open_win(buf, false, opts)
+
+        -- Update stored references
+        M.current_loading.buf = buf
+        M.current_loading.win = win
+
+        print("Window recreated") -- Debug print
 
         -- Schedule next update
         if M.current_loading then
