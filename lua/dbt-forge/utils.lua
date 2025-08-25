@@ -15,6 +15,33 @@ function M.run_command(cmd)
     return success and result or nil
 end
 
+function M.run_command_with_callback(cmd, output_callback)
+    local job_id = vim.fn.jobstart(cmd, {
+        on_stdout = function(_, data)
+            if output_callback and data then
+                for _, line in ipairs(data) do
+                    if line and line ~= "" then
+                        output_callback(line)
+                    end
+                end
+            end
+        end,
+        on_stderr = function(_, data)
+            if output_callback and data then
+                for _, line in ipairs(data) do
+                    if line and line ~= "" then
+                        output_callback("ERROR: " .. line)
+                    end
+                end
+            end
+        end,
+        stdout_buffered = false,
+        stderr_buffered = false
+    })
+    
+    return job_id
+end
+
 function M.read_file(filepath)
     local file = io.open(filepath, "r")
     if not file then

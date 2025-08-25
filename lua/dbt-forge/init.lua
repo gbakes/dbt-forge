@@ -58,35 +58,48 @@ function M.transpile_model()
     return
   end
 
-  vim.notify("Transpiling dbt model: " .. filename, vim.log.levels.INFO)
+  local loading = require("dbt-forge.loading")
+  
+  -- Show loading screen
+  loading.show_loading("DBT Transpiling: " .. filename, "🔮 Consulting the data crystal...")
 
   local compile_cmd = utils.build_dbt_command(string.format('dbt compile --select %s', filename))
   local compile_full_refresh_cmd = utils.build_dbt_command(string.format('dbt compile --select %s --full-refresh', filename))
 
-  local compile_result = utils.run_command(compile_cmd)
-  if not compile_result then
-    vim.notify("Failed to compile dbt model", vim.log.levels.ERROR)
-    return
-  end
+  -- Run first compilation with loading feedback
+  local job_id = utils.run_command_with_callback(compile_cmd, function(output)
+    loading.append_output(output)
+  end)
+
+  -- Wait for first command to complete, then run second
+  vim.fn.jobwait({job_id}, 30000) -- 30 second timeout
 
   local compiled_file_path = utils.find_compiled_file(filename)
   if not compiled_file_path then
+    loading.hide_loading()
     vim.notify("Could not find compiled SQL file", vim.log.levels.ERROR)
     return
   end
 
   local incremental_sql = utils.read_file(compiled_file_path)
   if not incremental_sql then
+    loading.hide_loading()
     vim.notify("Could not read compiled SQL file", vim.log.levels.ERROR)
     return
   end
 
-  local non_incremental_sql = ""
-  local compile_full_result = utils.run_command(compile_full_refresh_cmd)
-  if compile_full_result then
-    non_incremental_sql = utils.read_file(compiled_file_path) or ""
-  end
+  -- Run second compilation for full refresh
+  loading.append_output("\n📝 Compiling full-refresh version...")
+  local job_id2 = utils.run_command_with_callback(compile_full_refresh_cmd, function(output)
+    loading.append_output(output)
+  end)
 
+  vim.fn.jobwait({job_id2}, 30000) -- 30 second timeout
+
+  local non_incremental_sql = utils.read_file(compiled_file_path) or ""
+
+  -- Hide loading and show results
+  loading.hide_loading()
   ui.show_transpiled_sql(filename, incremental_sql, non_incremental_sql)
 end
 
