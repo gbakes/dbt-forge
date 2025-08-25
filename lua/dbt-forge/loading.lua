@@ -92,11 +92,13 @@ function M.start_message_rotation()
         return
     end
 
-    local function update_message()
+    -- Use vim.fn.timer_start with proper repeat
+    M.current_loading.message_timer = vim.fn.timer_start(2000, function()
         if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
             return
         end
 
+        -- Increment message index
         M.current_loading.current_message_index = M.current_loading.current_message_index + 1
         if M.current_loading.current_message_index > #M.funny_messages then
             M.current_loading.current_message_index = 1
@@ -104,22 +106,16 @@ function M.start_message_rotation()
 
         local new_message = M.funny_messages[M.current_loading.current_message_index]
         
-        -- Update the buffer line (hardcoded to line 3 for now)
-        local success, err = pcall(vim.api.nvim_buf_set_lines, 
-            M.current_loading.buf, 3, 4, false, { "    " .. new_message })
-        
-        if success then
-            vim.schedule(function() vim.cmd("redraw") end)
+        -- Get all current lines and update just the message line
+        local lines = vim.api.nvim_buf_get_lines(M.current_loading.buf, 0, -1, false)
+        if #lines > 3 then
+            lines[4] = "    " .. new_message  -- lines are 1-indexed when using get_lines
+            vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, lines)
+            vim.cmd("redraw")
         end
-
-        -- Schedule next update
-        if M.current_loading then
-            M.current_loading.message_timer = vim.defer_fn(update_message, 2000)
-        end
-    end
-
-    -- Start the rotation
-    M.current_loading.message_timer = vim.defer_fn(update_message, 2000)
+    end, {
+        ["repeat"] = -1  -- Repeat indefinitely
+    })
 end
 
 function M.append_output(text)
@@ -165,9 +161,9 @@ function M.hide_loading()
         return
     end
 
-    -- Stop message rotation timer (defer_fn based)
+    -- Stop message rotation timer
     if M.current_loading.message_timer then
-        -- The timer will naturally stop when M.current_loading becomes nil
+        vim.fn.timer_stop(M.current_loading.message_timer)
         M.current_loading.message_timer = nil
     end
 
