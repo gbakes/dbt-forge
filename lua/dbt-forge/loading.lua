@@ -103,9 +103,14 @@ function M.start_message_rotation()
         end
 
         local new_message = M.funny_messages[M.current_loading.current_message_index]
-        local line_idx = M.current_loading.message_line
-        vim.api.nvim_buf_set_lines(M.current_loading.buf, line_idx, line_idx + 1, false, { "    " .. new_message })
-        vim.cmd("redraw")
+        
+        -- Update the buffer line (hardcoded to line 3 for now)
+        local success, err = pcall(vim.api.nvim_buf_set_lines, 
+            M.current_loading.buf, 3, 4, false, { "    " .. new_message })
+        
+        if success then
+            vim.schedule(function() vim.cmd("redraw") end)
+        end
 
         -- Schedule next update
         if M.current_loading then
