@@ -69,14 +69,12 @@ function M.transpile_model()
     local compile_full_refresh_cmd = utils.build_dbt_command(string.format('dbt compile --select %s --full-refresh', filename))
 
     -- Run first compilation
-    loading.append_output("🔄 Running incremental compilation...")
     local compile_result = utils.run_command(compile_cmd)
     if not compile_result then
       loading.hide_loading()
       vim.notify("Failed to compile dbt model", vim.log.levels.ERROR)
       return
     end
-    loading.append_output("✅ Incremental compilation complete")
 
     local compiled_file_path = utils.find_compiled_file(filename)
     if not compiled_file_path then
@@ -93,22 +91,18 @@ function M.transpile_model()
     end
 
     -- Run second compilation for full refresh
-    loading.append_output("🔄 Running full-refresh compilation...")
     local compile_full_result = utils.run_command(compile_full_refresh_cmd)
     local non_incremental_sql = ""
     
     if compile_full_result then
       non_incremental_sql = utils.read_file(compiled_file_path) or ""
-      loading.append_output("✅ Full-refresh compilation complete")
-    else
-      loading.append_output("⚠️  Full-refresh compilation failed")
     end
 
     -- Hide loading and show results
     vim.defer_fn(function()
       loading.hide_loading()
       ui.show_transpiled_sql(filename, incremental_sql, non_incremental_sql)
-    end, 500) -- Small delay to see completion message
+    end, 500) -- Small delay to see the last message
   end, 100) -- Small delay to ensure loading screen renders
 end
 

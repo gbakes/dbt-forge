@@ -1,15 +1,14 @@
 local M = {}
-local config = require("dbt-forge.config")
 
 M.funny_messages = {
     "Diving the stakeholder's requirements",
-    "Seancing the project documentation",
+    "Seancing the project documentation", 
     "Reading the stakeholder requirements tea leaves",
     "Channeling the spirits of JIRA tickets past",
     "Reading the aura of your codebase",
     "Divining the location of missing data",
     "Casting SQspells",
-    "Summoning models from the astral plane",
+    "Summoning models from the astral plane", 
     "Using clairvoyance to deliver it yesterday",
     "Astral projecting the deadline to next week",
     "Gazing into the void... the void gazes back with more requirements",
@@ -17,143 +16,100 @@ M.funny_messages = {
 
 M.current_loading = nil
 
-function M.show_loading(title, initial_message)
+function M.show_loading(title)
+    -- Clean up any existing loading screen
     if M.current_loading then
         M.hide_loading()
     end
 
     title = title or "DBT Forge"
-    initial_message = initial_message or M.funny_messages[math.random(#M.funny_messages)]
-
-    -- Force redraw to ensure loading screen appears
-    vim.cmd("redraw")
-
+    
+    -- Create buffer
     local buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
     vim.api.nvim_buf_set_option(buf, "swapfile", false)
+    vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
-    local width = 60
-    local height = 15
+    -- Create window
+    local width = 50
+    local height = 8
     local row = math.floor((vim.o.lines - height) / 2)
     local col = math.floor((vim.o.columns - width) / 2)
-
-    local border_chars = config.options.ui.float_border == "rounded"
-            and { "╭", "─", "╮", "│", "╯", "─", "╰", "│" }
-        or { "┌", "─", "┐", "│", "┘", "─", "└", "│" }
 
     local opts = {
         relative = "editor",
         width = width,
-        height = height,
+        height = height, 
         row = row,
         col = col,
-        border = border_chars,
+        border = "rounded",
         title = " " .. title .. " ",
         title_pos = "center",
-        style = "minimal",
+        style = "minimal"
     }
 
     local win = vim.api.nvim_open_win(buf, false, opts)
-    vim.api.nvim_win_set_option(win, "wrap", true)
-    vim.api.nvim_win_set_option(win, "cursorline", false)
 
-    -- Initialize content
+    -- Set initial content
+    local message_index = math.random(#M.funny_messages)
     local content = {
         "",
-        "    ⏳ Working...",
+        "  " .. M.funny_messages[message_index],
         "",
-        "    " .. initial_message,
+        "  ⏳ Working...",
         "",
-        "    Output:",
-        "    " .. string.rep("─", 50),
-        ""
     }
 
+    vim.api.nvim_buf_set_option(buf, "modifiable", true)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
+    vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
-    -- Store loading state
+    -- Store state
     M.current_loading = {
         buf = buf,
         win = win,
-        message_line = 3, -- Line where the rotating message is (0-indexed)
-        output_start_line = 7, -- Line where output begins (0-indexed, after the separator)
-        message_timer = nil,
-        current_message_index = 1,
+        message_index = message_index,
+        timer = nil
     }
 
-    -- Start rotating funny messages
-    M.start_message_rotation()
+    -- Start message rotation
+    M.start_rotation()
 
     return M.current_loading
 end
 
-function M.start_message_rotation()
+function M.start_rotation()
     if not M.current_loading then
         return
     end
 
-    -- Use vim.fn.timer_start with proper repeat
-    M.current_loading.message_timer = vim.fn.timer_start(2000, function()
+    M.current_loading.timer = vim.fn.timer_start(2000, function()
         if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
             return
         end
 
-        -- Increment message index
-        M.current_loading.current_message_index = M.current_loading.current_message_index + 1
-        if M.current_loading.current_message_index > #M.funny_messages then
-            M.current_loading.current_message_index = 1
+        -- Next message
+        M.current_loading.message_index = M.current_loading.message_index + 1
+        if M.current_loading.message_index > #M.funny_messages then
+            M.current_loading.message_index = 1
         end
 
-        local new_message = M.funny_messages[M.current_loading.current_message_index]
+        local new_message = M.funny_messages[M.current_loading.message_index]
         
-        -- Get all current lines and update just the message line
-        local lines = vim.api.nvim_buf_get_lines(M.current_loading.buf, 0, -1, false)
-        if #lines > 3 then
-            lines[4] = "    " .. new_message  -- lines are 1-indexed when using get_lines
-            vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, lines)
-            vim.cmd("redraw")
-        end
-    end, {
-        ["repeat"] = -1  -- Repeat indefinitely
-    })
-end
+        -- Update content
+        local content = {
+            "",
+            "  " .. new_message,
+            "",
+            "  ⏳ Working...",
+            "",
+        }
 
-function M.append_output(text)
-    if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
-        return
-    end
-
-    -- Get current lines
-    local lines = vim.api.nvim_buf_get_lines(M.current_loading.buf, 0, -1, false)
-
-    -- Split text into lines and add them
-    for line in text:gmatch("[^\r\n]+") do
-        if line:match("%S") then -- Only add non-empty lines
-            table.insert(lines, "    " .. line)
-        end
-    end
-
-    -- Limit to reasonable number of lines (keep last 20 lines of output)
-    local header_lines = M.current_loading.output_start_line
-    if #lines > header_lines + 20 then
-        local new_lines = {}
-        -- Keep header
-        for i = 1, header_lines do
-            table.insert(new_lines, lines[i])
-        end
-        -- Keep last 20 output lines
-        for i = #lines - 19, #lines do
-            table.insert(new_lines, lines[i])
-        end
-        lines = new_lines
-    end
-
-    vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, lines)
-
-    -- Auto-scroll to bottom
-    if vim.api.nvim_win_is_valid(M.current_loading.win) then
-        vim.api.nvim_win_set_cursor(M.current_loading.win, { #lines, 0 })
-    end
+        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
+        vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
+        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
+        
+    end, { ["repeat"] = -1 })
 end
 
 function M.hide_loading()
@@ -161,17 +117,17 @@ function M.hide_loading()
         return
     end
 
-    -- Stop message rotation timer
-    if M.current_loading.message_timer then
-        vim.fn.timer_stop(M.current_loading.message_timer)
-        M.current_loading.message_timer = nil
+    -- Stop timer
+    if M.current_loading.timer then
+        vim.fn.timer_stop(M.current_loading.timer)
     end
 
-    -- Close window and buffer
+    -- Close window
     if vim.api.nvim_win_is_valid(M.current_loading.win) then
         vim.api.nvim_win_close(M.current_loading.win, true)
     end
 
+    -- Delete buffer  
     if vim.api.nvim_buf_is_valid(M.current_loading.buf) then
         vim.api.nvim_buf_delete(M.current_loading.buf, { force = true })
     end
