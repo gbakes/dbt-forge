@@ -22,8 +22,22 @@ M.options = {}
 function M.setup(opts)
   M.options = vim.tbl_deep_extend("force", M.defaults, opts or {})
   
+  local utils = require("dbt-forge.utils")
+  local project_config = utils.get_project_config()
+  
+  if not M.options.dbt_project_path and project_config.dbt_project_path then
+    M.options.dbt_project_path = project_config.dbt_project_path
+    vim.notify("dbt-forge.nvim: Auto-detected DBT project at " .. project_config.dbt_project_path, vim.log.levels.INFO)
+  end
+  
+  if not M.options.python_env_name and project_config.python_env_name then
+    M.options.python_env_manager = project_config.python_env_manager
+    M.options.python_env_name = project_config.python_env_name
+    vim.notify("dbt-forge.nvim: Auto-detected " .. project_config.python_env_manager .. " environment: " .. project_config.python_env_name, vim.log.levels.INFO)
+  end
+  
   if not M.options.dbt_project_path then
-    vim.notify("dbt-forge.nvim: dbt_project_path is required in setup()", vim.log.levels.ERROR)
+    vim.notify("dbt-forge.nvim: Could not find dbt_project.yml. Please set dbt_project_path in setup() or run from within a DBT project.", vim.log.levels.WARN)
   end
 end
 

@@ -55,5 +55,59 @@ function M.find_compiled_file(filename)
     return result:gsub("\n", "")
 end
 
+function M.find_dbt_project_path()
+  local current_dir = vim.fn.expand("%:p:h")
+  
+  while current_dir and current_dir ~= "/" do
+    local dbt_project_file = current_dir .. "/dbt_project.yml"
+    if vim.fn.filereadable(dbt_project_file) == 1 then
+      return current_dir
+    end
+    current_dir = vim.fn.fnamemodify(current_dir, ":h")
+  end
+  
+  return nil
+end
+
+function M.detect_python_env()
+  local pyenv_version_file = vim.fn.findfile(".python-version", ".;")
+  if pyenv_version_file ~= "" then
+    local env_name = M.read_file(pyenv_version_file)
+    if env_name then
+      env_name = env_name:gsub("%s+", "")
+      return "pyenv", env_name
+    end
+  end
+  
+  local conda_env_file = vim.fn.findfile("environment.yml", ".;")
+  if conda_env_file ~= "" then
+    local content = M.read_file(conda_env_file)
+    if content then
+      local env_name = content:match("name:%s*([%w%-_]+)")
+      if env_name then
+        return "conda", env_name
+      end
+    end
+  end
+  
+  local venv_dir = vim.fn.finddir("venv", ".;") or vim.fn.finddir(".venv", ".;")
+  if venv_dir ~= "" then
+    return "venv", vim.fn.fnamemodify(venv_dir, ":p")
+  end
+  
+  return "none", nil
+end
+
+function M.get_project_config()
+  local dbt_path = M.find_dbt_project_path()
+  local env_manager, env_name = M.detect_python_env()
+  
+  return {
+    dbt_project_path = dbt_path,
+    python_env_manager = env_manager,
+    python_env_name = env_name
+  }
+end
+
 return M
 
