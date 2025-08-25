@@ -110,6 +110,10 @@ function M.start_rotation()
         vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
         vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
         vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
+        
+        -- Force redraw to ensure UI updates
+        vim.cmd("redraw!")
+        print("Buffer updated and redrawn") -- Debug print
 
         -- Schedule next update
         if M.current_loading then
