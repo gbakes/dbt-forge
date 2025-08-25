@@ -1,0 +1,10 @@
+return {
+    _all = {
+        lua = "luajit",
+    },
+    default = {
+        ROOT = { "tests/" },
+        pattern = "_spec",
+    },
+}
+
