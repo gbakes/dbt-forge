@@ -122,11 +122,13 @@ function M.start_rotation()
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
         vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
-        -- Same window options as before
-        local width = 50
+        -- Make window changes more dramatic - alternate position and size
+        local width = M.current_loading.message_index % 2 == 0 and 60 or 40
         local height = 8
         local row = math.floor((vim.o.lines - height) / 2)
-        local col = math.floor((vim.o.columns - width) / 2)
+        local col = M.current_loading.message_index % 2 == 0 and 
+            math.floor((vim.o.columns - width) / 2) - 5 or 
+            math.floor((vim.o.columns - width) / 2) + 5
 
         local opts = {
             relative = "editor",
