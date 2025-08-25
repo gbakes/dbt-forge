@@ -84,40 +84,40 @@ function M.start_rotation()
     end
 
     local function update_message()
-        if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
-            return
-        end
-
-        -- Next message
-        M.current_loading.message_index = M.current_loading.message_index + 1
-        if M.current_loading.message_index > #M.funny_messages then
-            M.current_loading.message_index = 1
-        end
-
-        local new_message = M.funny_messages[M.current_loading.message_index]
-        
-        -- Update content
-        local content = {
-            "",
-            "  " .. new_message,
-            "",
-            "  ⏳ Working...",
-            "",
-        }
-
+        -- Do all nvim API calls inside vim.schedule to avoid fast event context issues
         vim.schedule(function()
-            if M.current_loading and vim.api.nvim_buf_is_valid(M.current_loading.buf) then
-                vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
-                vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
-                vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
+            -- Check if loading is still active
+            if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
+                return
+            end
+
+            -- Next message
+            M.current_loading.message_index = M.current_loading.message_index + 1
+            if M.current_loading.message_index > #M.funny_messages then
+                M.current_loading.message_index = 1
+            end
+
+            local new_message = M.funny_messages[M.current_loading.message_index]
+            
+            -- Update content
+            local content = {
+                "",
+                "  " .. new_message,
+                "",
+                "  ⏳ Working...",
+                "",
+            }
+
+            vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
+            vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
+            vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
+
+            -- Schedule next update
+            if M.current_loading then
+                M.current_loading.timer = vim.loop.new_timer()
+                M.current_loading.timer:start(2000, 0, update_message)
             end
         end)
-
-        -- Schedule next update
-        if M.current_loading then
-            M.current_loading.timer = vim.loop.new_timer()
-            M.current_loading.timer:start(2000, 0, update_message)
-        end
     end
 
     -- Start first update
@@ -130,21 +130,28 @@ function M.hide_loading()
         return
     end
 
-    -- Stop timer
+    -- Stop timer first to prevent any further updates
     if M.current_loading.timer then
-        M.current_loading.timer:stop()
-        M.current_loading.timer:close()
+        pcall(function()
+            M.current_loading.timer:stop()
+            M.current_loading.timer:close()
+        end)
     end
 
-    -- Close window
-    if vim.api.nvim_win_is_valid(M.current_loading.win) then
-        vim.api.nvim_win_close(M.current_loading.win, true)
-    end
+    -- Schedule cleanup on main thread
+    vim.schedule(function()
+        if M.current_loading then
+            -- Close window
+            if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
+                vim.api.nvim_win_close(M.current_loading.win, true)
+            end
 
-    -- Delete buffer  
-    if vim.api.nvim_buf_is_valid(M.current_loading.buf) then
-        vim.api.nvim_buf_delete(M.current_loading.buf, { force = true })
-    end
+            -- Delete buffer  
+            if M.current_loading.buf and vim.api.nvim_buf_is_valid(M.current_loading.buf) then
+                vim.api.nvim_buf_delete(M.current_loading.buf, { force = true })
+            end
+        end
+    end)
 
     M.current_loading = nil
 end
