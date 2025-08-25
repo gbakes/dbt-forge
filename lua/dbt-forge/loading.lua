@@ -24,6 +24,9 @@ function M.show_loading(title, initial_message)
 
     title = title or "DBT Forge"
     initial_message = initial_message or M.funny_messages[math.random(#M.funny_messages)]
+    
+    -- Force redraw to ensure loading screen appears
+    vim.cmd("redraw")
 
     local buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_option(buf, "buftype", "nofile")

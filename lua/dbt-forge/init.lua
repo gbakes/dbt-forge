@@ -61,46 +61,55 @@ function M.transpile_model()
   local loading = require("dbt-forge.loading")
   
   -- Show loading screen
-  loading.show_loading("DBT Transpiling: " .. filename, "🔮 Consulting the data crystal...")
+  loading.show_loading("DBT Transpiling: " .. filename)
 
-  local compile_cmd = utils.build_dbt_command(string.format('dbt compile --select %s', filename))
-  local compile_full_refresh_cmd = utils.build_dbt_command(string.format('dbt compile --select %s --full-refresh', filename))
+  -- Use vim.defer_fn to ensure loading screen shows before starting work
+  vim.defer_fn(function()
+    local compile_cmd = utils.build_dbt_command(string.format('dbt compile --select %s', filename))
+    local compile_full_refresh_cmd = utils.build_dbt_command(string.format('dbt compile --select %s --full-refresh', filename))
 
-  -- Run first compilation with loading feedback
-  local job_id = utils.run_command_with_callback(compile_cmd, function(output)
-    loading.append_output(output)
-  end)
+    -- Run first compilation
+    loading.append_output("🔄 Running incremental compilation...")
+    local compile_result = utils.run_command(compile_cmd)
+    if not compile_result then
+      loading.hide_loading()
+      vim.notify("Failed to compile dbt model", vim.log.levels.ERROR)
+      return
+    end
+    loading.append_output("✅ Incremental compilation complete")
 
-  -- Wait for first command to complete, then run second
-  vim.fn.jobwait({job_id}, 30000) -- 30 second timeout
+    local compiled_file_path = utils.find_compiled_file(filename)
+    if not compiled_file_path then
+      loading.hide_loading()
+      vim.notify("Could not find compiled SQL file", vim.log.levels.ERROR)
+      return
+    end
 
-  local compiled_file_path = utils.find_compiled_file(filename)
-  if not compiled_file_path then
-    loading.hide_loading()
-    vim.notify("Could not find compiled SQL file", vim.log.levels.ERROR)
-    return
-  end
+    local incremental_sql = utils.read_file(compiled_file_path)
+    if not incremental_sql then
+      loading.hide_loading()
+      vim.notify("Could not read compiled SQL file", vim.log.levels.ERROR)
+      return
+    end
 
-  local incremental_sql = utils.read_file(compiled_file_path)
-  if not incremental_sql then
-    loading.hide_loading()
-    vim.notify("Could not read compiled SQL file", vim.log.levels.ERROR)
-    return
-  end
+    -- Run second compilation for full refresh
+    loading.append_output("🔄 Running full-refresh compilation...")
+    local compile_full_result = utils.run_command(compile_full_refresh_cmd)
+    local non_incremental_sql = ""
+    
+    if compile_full_result then
+      non_incremental_sql = utils.read_file(compiled_file_path) or ""
+      loading.append_output("✅ Full-refresh compilation complete")
+    else
+      loading.append_output("⚠️  Full-refresh compilation failed")
+    end
 
-  -- Run second compilation for full refresh
-  loading.append_output("\n📝 Compiling full-refresh version...")
-  local job_id2 = utils.run_command_with_callback(compile_full_refresh_cmd, function(output)
-    loading.append_output(output)
-  end)
-
-  vim.fn.jobwait({job_id2}, 30000) -- 30 second timeout
-
-  local non_incremental_sql = utils.read_file(compiled_file_path) or ""
-
-  -- Hide loading and show results
-  loading.hide_loading()
-  ui.show_transpiled_sql(filename, incremental_sql, non_incremental_sql)
+    -- Hide loading and show results
+    vim.defer_fn(function()
+      loading.hide_loading()
+      ui.show_transpiled_sql(filename, incremental_sql, non_incremental_sql)
+    end, 500) -- Small delay to see completion message
+  end, 100) -- Small delay to ensure loading screen renders
 end
 
 function M.test_model()
