@@ -83,37 +83,43 @@ function M.start_rotation()
         return
     end
 
-    -- Use a simpler approach with vim.fn.timer_start but with vim.schedule
-    M.current_loading.timer = vim.fn.timer_start(2000, function()
-        vim.schedule(function()
-            -- Check if loading is still active
-            if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
-                return
-            end
+    local function update_message()
+        -- Check if loading is still active
+        if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
+            return
+        end
 
-            -- Next message
-            M.current_loading.message_index = M.current_loading.message_index + 1
-            if M.current_loading.message_index > #M.funny_messages then
-                M.current_loading.message_index = 1
-            end
+        -- Next message
+        M.current_loading.message_index = M.current_loading.message_index + 1
+        if M.current_loading.message_index > #M.funny_messages then
+            M.current_loading.message_index = 1
+        end
 
-            local new_message = M.funny_messages[M.current_loading.message_index]
-            print("Updating to message: " .. new_message) -- Debug print
-            
-            -- Update content
-            local content = {
-                "",
-                "  " .. new_message,
-                "",
-                "  ⏳ Working...",
-                "",
-            }
+        local new_message = M.funny_messages[M.current_loading.message_index]
+        print("Updating to message: " .. new_message) -- Debug print
+        
+        -- Update content
+        local content = {
+            "",
+            "  " .. new_message,
+            "",
+            "  ⏳ Working...",
+            "",
+        }
 
-            vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
-            vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
-            vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
-        end)
-    end, { ["repeat"] = -1 })
+        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
+        vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
+        vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
+
+        -- Schedule next update
+        if M.current_loading then
+            M.current_loading.timer = vim.defer_fn(update_message, 2000)
+        end
+    end
+
+    -- Start first update
+    M.current_loading.timer = vim.defer_fn(update_message, 2000)
+    print("Timer started") -- Debug print
 end
 
 function M.hide_loading()
@@ -122,11 +128,6 @@ function M.hide_loading()
     end
 
     print("Hiding loading screen...") -- Debug print
-
-    -- Stop timer
-    if M.current_loading.timer then
-        vim.fn.timer_stop(M.current_loading.timer)
-    end
 
     -- Close window
     if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
@@ -138,6 +139,7 @@ function M.hide_loading()
         vim.api.nvim_buf_delete(M.current_loading.buf, { force = true })
     end
 
+    -- Clear the loading state (this will stop future timer callbacks)
     M.current_loading = nil
     print("Loading screen hidden") -- Debug print
 end
