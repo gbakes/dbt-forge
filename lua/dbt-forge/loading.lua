@@ -91,7 +91,7 @@ function M.start_message_rotation()
         return
     end
 
-    M.current_loading.message_timer = vim.fn.timer_start(2000, function()
+    local function update_message()
         if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
             return
         end
@@ -103,7 +103,16 @@ function M.start_message_rotation()
 
         local new_message = M.funny_messages[M.current_loading.current_message_index]
         vim.api.nvim_buf_set_lines(M.current_loading.buf, 1, 2, false, { "    " .. new_message })
-    end, { ["repeat"] = -1 })
+        vim.cmd("redraw")
+        
+        -- Schedule next update
+        if M.current_loading then
+            M.current_loading.message_timer = vim.defer_fn(update_message, 2000)
+        end
+    end
+
+    -- Start the rotation
+    M.current_loading.message_timer = vim.defer_fn(update_message, 2000)
 end
 
 function M.append_output(text)
@@ -149,9 +158,10 @@ function M.hide_loading()
         return
     end
 
-    -- Stop message rotation timer
+    -- Stop message rotation timer (defer_fn based)
     if M.current_loading.message_timer then
-        vim.fn.timer_stop(M.current_loading.message_timer)
+        -- The timer will naturally stop when M.current_loading becomes nil
+        M.current_loading.message_timer = nil
     end
 
     -- Close window and buffer
