@@ -28,7 +28,12 @@ function M.show_loading(title)
     vim.api.nvim_buf_set_option(buf, "swapfile", false)
     vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
-    local width = 50
+    -- Calculate width based on longest message + padding
+    local max_msg_len = 0
+    for _, msg in ipairs(M.funny_messages) do
+        max_msg_len = math.max(max_msg_len, #msg)
+    end
+    local width = math.min(math.max(max_msg_len + 4, 50), math.floor(vim.o.columns * 0.8))
     local height = 8
     local row = math.floor((vim.o.lines - height) / 2)
     local col = math.floor((vim.o.columns - width) / 2)
@@ -112,7 +117,12 @@ function M.start_rotation()
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
         vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
-        local width = 50
+        -- Calculate width based on longest message + padding
+        local max_msg_len = 0
+        for _, msg in ipairs(M.funny_messages) do
+            max_msg_len = math.max(max_msg_len, #msg)
+        end
+        local width = math.min(math.max(max_msg_len + 4, 50), math.floor(vim.o.columns * 0.8))
         local height = 8
         local row = math.floor((vim.o.lines - height) / 2)
         local col = math.floor((vim.o.columns - width) / 2)
