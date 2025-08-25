@@ -126,10 +126,42 @@ function M.show_sql_comparison(filename, incremental_sql, non_incremental_sql)
     vim.api.nvim_win_set_option(win, "cursorline", true)
   end
 
+  -- Close both windows when q or ESC is pressed from either buffer
+  local function close_both_windows()
+    if vim.api.nvim_win_is_valid(win1) then
+      vim.api.nvim_win_close(win1, true)
+    end
+    if vim.api.nvim_win_is_valid(win2) then
+      vim.api.nvim_win_close(win2, true)
+    end
+  end
+
   for _, buf in ipairs({buf1, buf2}) do
-    vim.api.nvim_buf_set_keymap(buf, "n", "q", "<cmd>close<cr>", { noremap = true, silent = true })
-    vim.api.nvim_buf_set_keymap(buf, "n", "<ESC>", "<cmd>close<cr>", { noremap = true, silent = true })
-    vim.api.nvim_buf_set_keymap(buf, "n", "<Tab>", "<C-w>w", { noremap = true, silent = true })
+    vim.api.nvim_buf_set_keymap(buf, "n", "q", "", { 
+      noremap = true, 
+      silent = true,
+      callback = close_both_windows
+    })
+    vim.api.nvim_buf_set_keymap(buf, "n", "<ESC>", "", { 
+      noremap = true, 
+      silent = true,
+      callback = close_both_windows
+    })
+    -- Use h/l for left/right navigation between windows
+    vim.api.nvim_buf_set_keymap(buf, "n", "<C-h>", "", {
+      noremap = true,
+      silent = true,
+      callback = function()
+        vim.api.nvim_set_current_win(win1)
+      end
+    })
+    vim.api.nvim_buf_set_keymap(buf, "n", "<C-l>", "", {
+      noremap = true,
+      silent = true,
+      callback = function()
+        vim.api.nvim_set_current_win(win2)
+      end
+    })
   end
 end
 
