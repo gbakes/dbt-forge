@@ -24,7 +24,7 @@ function M.show_loading(title, initial_message)
 
     title = title or "DBT Forge"
     initial_message = initial_message or M.funny_messages[math.random(#M.funny_messages)]
-    
+
     -- Force redraw to ensure loading screen appears
     vim.cmd("redraw")
 
@@ -60,12 +60,9 @@ function M.show_loading(title, initial_message)
     -- Initialize content
     local content = {
         "",
-        "    " .. initial_message,
-        "",
         "    ⏳ Working...",
         "",
-        "    Output:",
-        "    " .. string.rep("─", 50),
+        "    " .. initial_message,
         "",
     }
 
@@ -75,7 +72,7 @@ function M.show_loading(title, initial_message)
     M.current_loading = {
         buf = buf,
         win = win,
-        output_start_line = 7, -- Line where output begins
+        message_line = 3, -- Line where the rotating message is (0-indexed)
         message_timer = nil,
         current_message_index = 1,
     }
@@ -102,9 +99,10 @@ function M.start_message_rotation()
         end
 
         local new_message = M.funny_messages[M.current_loading.current_message_index]
-        vim.api.nvim_buf_set_lines(M.current_loading.buf, 1, 2, false, { "    " .. new_message })
+        local line_idx = M.current_loading.message_line
+        vim.api.nvim_buf_set_lines(M.current_loading.buf, line_idx, line_idx + 1, false, { "    " .. new_message })
         vim.cmd("redraw")
-        
+
         -- Schedule next update
         if M.current_loading then
             M.current_loading.message_timer = vim.defer_fn(update_message, 2000)
@@ -177,4 +175,3 @@ function M.hide_loading()
 end
 
 return M
-
