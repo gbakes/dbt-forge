@@ -96,7 +96,6 @@ function M.start_rotation()
         end
 
         local new_message = M.funny_messages[M.current_loading.message_index]
-        print("Updating to message: " .. new_message) -- Debug print
         
         -- Close old window and buffer
         if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
@@ -122,13 +121,11 @@ function M.start_rotation()
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
         vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
-        -- Make window changes more dramatic - alternate position and size
-        local width = M.current_loading.message_index % 2 == 0 and 60 or 40
+        -- Standard window positioning
+        local width = 50
         local height = 8
         local row = math.floor((vim.o.lines - height) / 2)
-        local col = M.current_loading.message_index % 2 == 0 and 
-            math.floor((vim.o.columns - width) / 2) - 5 or 
-            math.floor((vim.o.columns - width) / 2) + 5
+        local col = math.floor((vim.o.columns - width) / 2)
 
         local opts = {
             relative = "editor",
@@ -148,8 +145,6 @@ function M.start_rotation()
         M.current_loading.buf = buf
         M.current_loading.win = win
 
-        print("Window recreated") -- Debug print
-
         -- Schedule next update
         if M.current_loading then
             M.current_loading.timer = vim.defer_fn(update_message, 1000)
@@ -158,7 +153,6 @@ function M.start_rotation()
 
     -- Start first update immediately, then schedule the timer
     update_message()
-    print("Timer started") -- Debug print
 end
 
 function M.hide_loading()
@@ -166,7 +160,6 @@ function M.hide_loading()
         return
     end
 
-    print("Hiding loading screen...") -- Debug print
 
     -- Close window
     if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
@@ -180,7 +173,6 @@ function M.hide_loading()
 
     -- Clear the loading state (this will stop future timer callbacks)
     M.current_loading = nil
-    print("Loading screen hidden") -- Debug print
 end
 
 return M

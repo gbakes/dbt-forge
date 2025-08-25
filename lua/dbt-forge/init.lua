@@ -68,41 +68,47 @@ function M.transpile_model()
     local compile_cmd = utils.build_dbt_command(string.format('dbt compile --select %s', filename))
     local compile_full_refresh_cmd = utils.build_dbt_command(string.format('dbt compile --select %s --full-refresh', filename))
 
-    -- Run first compilation
-    local compile_result = utils.run_command(compile_cmd)
-    if not compile_result then
-      loading.hide_loading()
-      vim.notify("Failed to compile dbt model", vim.log.levels.ERROR)
-      return
-    end
+    -- Run first compilation asynchronously
+    local job1 = vim.fn.jobstart(compile_cmd, {
+      on_exit = function(_, exit_code)
+        if exit_code ~= 0 then
+          loading.hide_loading()
+          vim.notify("Failed to compile dbt model", vim.log.levels.ERROR)
+          return
+        end
 
-    local compiled_file_path = utils.find_compiled_file(filename)
-    if not compiled_file_path then
-      loading.hide_loading()
-      vim.notify("Could not find compiled SQL file", vim.log.levels.ERROR)
-      return
-    end
+        local compiled_file_path = utils.find_compiled_file(filename)
+        if not compiled_file_path then
+          loading.hide_loading()
+          vim.notify("Could not find compiled SQL file", vim.log.levels.ERROR)
+          return
+        end
 
-    local incremental_sql = utils.read_file(compiled_file_path)
-    if not incremental_sql then
-      loading.hide_loading()
-      vim.notify("Could not read compiled SQL file", vim.log.levels.ERROR)
-      return
-    end
+        local incremental_sql = utils.read_file(compiled_file_path)
+        if not incremental_sql then
+          loading.hide_loading()
+          vim.notify("Could not read compiled SQL file", vim.log.levels.ERROR)
+          return
+        end
 
-    -- Run second compilation for full refresh
-    local compile_full_result = utils.run_command(compile_full_refresh_cmd)
-    local non_incremental_sql = ""
-    
-    if compile_full_result then
-      non_incremental_sql = utils.read_file(compiled_file_path) or ""
-    end
+        -- Run second compilation for full refresh asynchronously
+        local job2 = vim.fn.jobstart(compile_full_refresh_cmd, {
+          on_exit = function(_, exit_code2)
+            local non_incremental_sql = ""
+            
+            if exit_code2 == 0 then
+              non_incremental_sql = utils.read_file(compiled_file_path) or ""
+            end
 
-    -- Hide loading and show results (with minimum display time)
-    vim.defer_fn(function()
-      loading.hide_loading()
-      ui.show_transpiled_sql(filename, incremental_sql, non_incremental_sql)
-    end, 3000) -- Show loading screen for at least 3 seconds to see message rotation
+            -- Small delay to see the loading screen, then hide and show results
+            vim.defer_fn(function()
+              loading.hide_loading()
+              ui.show_transpiled_sql(filename, incremental_sql, non_incremental_sql)
+            end, 1000) -- 1 second delay to see messages
+          end
+        })
+      end
+    })
   end, 100) -- Small delay to ensure loading screen renders
 end
 
