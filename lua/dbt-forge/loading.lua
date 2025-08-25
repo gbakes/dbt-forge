@@ -64,6 +64,9 @@ function M.show_loading(title, initial_message)
         "",
         "    " .. initial_message,
         "",
+        "    Output:",
+        "    " .. string.rep("─", 50),
+        ""
     }
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
@@ -73,6 +76,7 @@ function M.show_loading(title, initial_message)
         buf = buf,
         win = win,
         message_line = 3, -- Line where the rotating message is (0-indexed)
+        output_start_line = 7, -- Line where output begins (0-indexed, after the separator)
         message_timer = nil,
         current_message_index = 1,
     }
