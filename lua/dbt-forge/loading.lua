@@ -83,8 +83,8 @@ function M.start_rotation()
         return
     end
 
-    local function update_message()
-        -- Do all nvim API calls inside vim.schedule to avoid fast event context issues
+    -- Use a simpler approach with vim.fn.timer_start but with vim.schedule
+    M.current_loading.timer = vim.fn.timer_start(2000, function()
         vim.schedule(function()
             -- Check if loading is still active
             if not M.current_loading or not vim.api.nvim_buf_is_valid(M.current_loading.buf) then
@@ -98,6 +98,7 @@ function M.start_rotation()
             end
 
             local new_message = M.funny_messages[M.current_loading.message_index]
+            print("Updating to message: " .. new_message) -- Debug print
             
             -- Update content
             local content = {
@@ -111,18 +112,8 @@ function M.start_rotation()
             vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", true)
             vim.api.nvim_buf_set_lines(M.current_loading.buf, 0, -1, false, content)
             vim.api.nvim_buf_set_option(M.current_loading.buf, "modifiable", false)
-
-            -- Schedule next update
-            if M.current_loading then
-                M.current_loading.timer = vim.loop.new_timer()
-                M.current_loading.timer:start(2000, 0, update_message)
-            end
         end)
-    end
-
-    -- Start first update
-    M.current_loading.timer = vim.loop.new_timer()
-    M.current_loading.timer:start(2000, 0, update_message)
+    end, { ["repeat"] = -1 })
 end
 
 function M.hide_loading()
@@ -130,30 +121,25 @@ function M.hide_loading()
         return
     end
 
-    -- Stop timer first to prevent any further updates
+    print("Hiding loading screen...") -- Debug print
+
+    -- Stop timer
     if M.current_loading.timer then
-        pcall(function()
-            M.current_loading.timer:stop()
-            M.current_loading.timer:close()
-        end)
+        vim.fn.timer_stop(M.current_loading.timer)
     end
 
-    -- Schedule cleanup on main thread
-    vim.schedule(function()
-        if M.current_loading then
-            -- Close window
-            if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
-                vim.api.nvim_win_close(M.current_loading.win, true)
-            end
+    -- Close window
+    if M.current_loading.win and vim.api.nvim_win_is_valid(M.current_loading.win) then
+        vim.api.nvim_win_close(M.current_loading.win, true)
+    end
 
-            -- Delete buffer  
-            if M.current_loading.buf and vim.api.nvim_buf_is_valid(M.current_loading.buf) then
-                vim.api.nvim_buf_delete(M.current_loading.buf, { force = true })
-            end
-        end
-    end)
+    -- Delete buffer  
+    if M.current_loading.buf and vim.api.nvim_buf_is_valid(M.current_loading.buf) then
+        vim.api.nvim_buf_delete(M.current_loading.buf, { force = true })
+    end
 
     M.current_loading = nil
+    print("Loading screen hidden") -- Debug print
 end
 
 return M
