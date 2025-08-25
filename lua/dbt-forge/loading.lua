@@ -113,12 +113,12 @@ function M.start_rotation()
 
         -- Schedule next update
         if M.current_loading then
-            M.current_loading.timer = vim.defer_fn(update_message, 2000)
+            M.current_loading.timer = vim.defer_fn(update_message, 1000)
         end
     end
 
-    -- Start first update
-    M.current_loading.timer = vim.defer_fn(update_message, 2000)
+    -- Start first update immediately, then schedule the timer
+    update_message()
     print("Timer started") -- Debug print
 end
 
