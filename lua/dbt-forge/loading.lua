@@ -135,7 +135,7 @@ function M.start_rotation()
         M.current_loading.win = win
 
         if M.current_loading then
-            M.current_loading.timer = vim.defer_fn(update_message, 2000)
+            M.current_loading.timer = vim.defer_fn(update_message, 3000)
         end
     end
 
