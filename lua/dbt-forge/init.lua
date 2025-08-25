@@ -98,11 +98,11 @@ function M.transpile_model()
       non_incremental_sql = utils.read_file(compiled_file_path) or ""
     end
 
-    -- Hide loading and show results
+    -- Hide loading and show results (with minimum display time)
     vim.defer_fn(function()
       loading.hide_loading()
       ui.show_transpiled_sql(filename, incremental_sql, non_incremental_sql)
-    end, 500) -- Small delay to see the last message
+    end, 3000) -- Show loading screen for at least 3 seconds to see message rotation
   end, 100) -- Small delay to ensure loading screen renders
 end
 
