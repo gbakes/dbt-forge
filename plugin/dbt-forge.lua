@@ -21,3 +21,9 @@ vim.api.nvim_create_user_command("DbtTest", function()
 end, {
   desc = "Run tests for the current DBT model",
 })
+
+vim.api.nvim_create_user_command("DbtGotoDef", function()
+  require("dbt-forge").goto_definition()
+end, {
+  desc = "Go to definition of dbt ref/source/macro under cursor",
+})

@@ -8,6 +8,7 @@ M.defaults = {
     run_model = "<leader>dr",
     transpile_model = "<leader>dt",
     test_model = "<leader>dT",
+    goto_definition = "gd",
   },
   ui = {
     split_size = 15,

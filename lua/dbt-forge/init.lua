@@ -3,6 +3,7 @@ local M = {}
 local config = require("dbt-forge.config")
 local utils = require("dbt-forge.utils")
 local ui = require("dbt-forge.ui")
+local goto_def = require("dbt-forge.goto")
 
 function M.setup(opts)
   config.setup(opts)
@@ -28,6 +29,20 @@ function M.setup(opts)
       desc = "Run tests for current dbt model",
       noremap = true,
       silent = true,
+    })
+  end
+
+  if config.options.keymaps.goto_definition then
+    vim.api.nvim_create_autocmd("FileType", {
+      pattern = "sql",
+      callback = function(args)
+        vim.keymap.set("n", config.options.keymaps.goto_definition, goto_def.goto_definition, {
+          buffer = args.buf,
+          desc = "Go to dbt model/source/macro definition",
+          noremap = true,
+          silent = true,
+        })
+      end,
     })
   end
 end
@@ -128,5 +143,7 @@ function M.test_model()
 
   ui.run_in_split(cmd)
 end
+
+M.goto_definition = goto_def.goto_definition
 
 return M
