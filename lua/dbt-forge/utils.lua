@@ -102,10 +102,29 @@ function M.detect_python_env()
     local env_name = M.read_file(pyenv_version_file)
     if env_name then
       env_name = env_name:gsub("%s+", "")
+      -- Check if this is a virtualenv name or a bare Python version.
+      -- A bare version (e.g. "3.10.14") will have an envs/ subdirectory
+      -- under pyenv, while a virtualenv name won't.
+      local pyenv_root = os.getenv("PYENV_ROOT") or (os.getenv("HOME") .. "/.pyenv")
+      local version_path = pyenv_root .. "/versions/" .. env_name
+      local envs_dir = version_path .. "/envs"
+      if vim.fn.isdirectory(envs_dir) == 1 then
+        -- It's a base Python version, not a virtualenv.
+        -- Look for a virtualenv based on this version that has dbt installed.
+        local envs = vim.fn.readdir(envs_dir)
+        for _, venv_name in ipairs(envs) do
+          local dbt_path = envs_dir .. "/" .. venv_name .. "/bin/dbt"
+          if vim.fn.filereadable(dbt_path) == 1 then
+            return "pyenv", venv_name
+          end
+        end
+      end
+      -- Either it's already a virtualenv name, or no dbt-containing
+      -- virtualenv was found — use the value as-is
       return "pyenv", env_name
     end
   end
-  
+
   local conda_env_file = vim.fn.findfile("environment.yml", ".;")
   if conda_env_file ~= "" then
     local content = M.read_file(conda_env_file)
@@ -116,12 +135,15 @@ function M.detect_python_env()
       end
     end
   end
-  
-  local venv_dir = vim.fn.finddir("venv", ".;") or vim.fn.finddir(".venv", ".;")
+
+  local venv_dir = vim.fn.finddir("venv", ".;")
+  if venv_dir == "" then
+    venv_dir = vim.fn.finddir(".venv", ".;")
+  end
   if venv_dir ~= "" then
     return "venv", vim.fn.fnamemodify(venv_dir, ":p")
   end
-  
+
   return "none", nil
 end
 
