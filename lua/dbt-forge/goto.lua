@@ -19,31 +19,7 @@ local function is_builtin(name)
   return false
 end
 
-local function parse_reference_at_cursor()
-  local line = vim.api.nvim_get_current_line()
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local col = cursor[2] + 1 -- convert to 1-indexed
-
-  -- Find the {{ ... }} block containing the cursor
-  local jinja_expr = nil
-  local search_start = 1
-  while true do
-    local open_start, open_end = line:find("{{", search_start, true)
-    if not open_start then break end
-    local close_start, close_end = line:find("}}", open_end + 1, true)
-    if not close_start then break end
-
-    if col >= open_start and col <= close_end then
-      jinja_expr = line:sub(open_end + 1, close_start - 1)
-      break
-    end
-    search_start = close_end + 1
-  end
-
-  if not jinja_expr then
-    return nil
-  end
-
+local function extract_jinja_patterns(jinja_expr)
   jinja_expr = vim.trim(jinja_expr)
 
   -- Pattern 1: ref('model_name') or ref("model_name")
@@ -75,18 +51,77 @@ local function parse_reference_at_cursor()
   return nil
 end
 
+local function find_jinja_block(line, col, open_delim, close_delim)
+  local search_start = 1
+  while true do
+    local open_start, open_end = line:find(open_delim, search_start, true)
+    if not open_start then break end
+    local close_start, close_end = line:find(close_delim, open_end + 1, true)
+    if not close_start then break end
+
+    if col >= open_start and col <= close_end then
+      return line:sub(open_end + 1, close_start - 1)
+    end
+    search_start = close_end + 1
+  end
+  return nil
+end
+
+local function parse_reference_at_cursor()
+  local line = vim.api.nvim_get_current_line()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local col = cursor[2] + 1 -- convert to 1-indexed
+
+  -- First pass: look for {{ ... }} expression blocks
+  local jinja_expr = find_jinja_block(line, col, "{{", "}}")
+  if jinja_expr then
+    return extract_jinja_patterns(jinja_expr)
+  end
+
+  -- Second pass: look for {% ... %} statement blocks
+  local jinja_stmt = find_jinja_block(line, col, "{%", "%}")
+  if jinja_stmt then
+    return extract_jinja_patterns(jinja_stmt)
+  end
+
+  return nil
+end
+
 local function resolve_ref(model_name)
   local project_path = config.options.dbt_project_path
   if not project_path then return nil end
 
   local models_dir = project_path .. "/models"
-  local matches = vim.fn.globpath(models_dir, "**/" .. model_name .. ".sql", false, true)
 
-  if #matches == 0 then
-    return nil
+  -- Priority 1: .sql model file
+  local sql_matches = vim.fn.globpath(models_dir, "**/" .. model_name .. ".sql", false, true)
+  if #sql_matches > 0 then
+    return { file = sql_matches[1], line = 1 }
   end
 
-  return { file = matches[1], line = 1 }
+  -- Priority 2: YAML schema definition (for ephemeral/external models)
+  local yml_files = vim.fn.globpath(models_dir, "**/*.yml", false, true)
+  local yaml_files = vim.fn.globpath(models_dir, "**/*.yaml", false, true)
+  vim.list_extend(yml_files, yaml_files)
+
+  local name_pattern = "%-%s*name:%s*" .. vim.pesc(model_name) .. "%s*$"
+
+  for _, yml_path in ipairs(yml_files) do
+    local content = utils.read_file(yml_path)
+    if not content then goto continue end
+    if not content:find(model_name, 1, true) then goto continue end
+
+    local lines = vim.split(content, "\n")
+    for i, line in ipairs(lines) do
+      if line:match(name_pattern) then
+        return { file = yml_path, line = i }
+      end
+    end
+
+    ::continue::
+  end
+
+  return nil
 end
 
 local function resolve_source(namespace, table_name)
@@ -152,11 +187,14 @@ local function resolve_macro(macro_name, package_name)
 
   local sql_files = vim.fn.globpath(search_dir, "**/*.sql", false, true)
 
-  local pattern = "{%%%s*macro%s+" .. vim.pesc(macro_name) .. "%s*%("
-  local pattern_trim = "{%%%-?%s*macro%s+" .. vim.pesc(macro_name) .. "%s*%("
+  local macro_def_pattern = "{%%%s*macro%s+" .. vim.pesc(macro_name) .. "%s*%("
+  local macro_def_pattern_trim = "{%%%-?%s*macro%s+" .. vim.pesc(macro_name) .. "%s*%("
+
+  -- Priority 1: .sql file with {% macro NAME %} definition
+  -- Priority 2: .sql file referencing the name (without macro definition)
+  local sql_reference_match = nil
 
   for _, sql_path in ipairs(sql_files) do
-    -- For package macros, filter by package directory name
     if package_name then
       local normalized_pkg = package_name:gsub("[-_]", "[-_]")
       if not sql_path:match("/dbt_packages/" .. normalized_pkg .. "/") then
@@ -169,12 +207,79 @@ local function resolve_macro(macro_name, package_name)
 
     local lines = vim.split(content, "\n")
     for i, line in ipairs(lines) do
-      if line:match(pattern) or line:match(pattern_trim) then
+      if line:match(macro_def_pattern) or line:match(macro_def_pattern_trim) then
+        -- Priority 1: macro definition — return immediately
         return { file = sql_path, line = i }
       end
     end
 
+    -- Track first SQL file that references the name (priority 2)
+    if not sql_reference_match and content:find(macro_name, 1, true) then
+      sql_reference_match = { file = sql_path, line = 1 }
+    end
+
     ::continue::
+  end
+
+  -- Priority 2: SQL reference match
+  if sql_reference_match then
+    return sql_reference_match
+  end
+
+  -- Priority 3: YAML file mentioning the macro name
+  local yml_files = vim.fn.globpath(search_dir, "**/*.yml", false, true)
+  local yaml_files = vim.fn.globpath(search_dir, "**/*.yaml", false, true)
+  vim.list_extend(yml_files, yaml_files)
+
+  for _, yml_path in ipairs(yml_files) do
+    local content = utils.read_file(yml_path)
+    if not content then goto yml_continue end
+    if not content:find(macro_name, 1, true) then goto yml_continue end
+
+    local lines = vim.split(content, "\n")
+    for i, line in ipairs(lines) do
+      if line:find(macro_name, 1, true) then
+        return { file = yml_path, line = i }
+      end
+    end
+
+    ::yml_continue::
+  end
+
+  return nil
+end
+
+local function resolve_word(word)
+  local project_path = config.options.dbt_project_path
+  if not project_path then return nil end
+
+  -- Try macro definition in macros dir
+  local macros_dir = project_path .. "/macros"
+  if vim.fn.isdirectory(macros_dir) == 1 then
+    local sql_files = vim.fn.globpath(macros_dir, "**/*.sql", false, true)
+    local pattern = "{%%%s*macro%s+" .. vim.pesc(word) .. "%s*%("
+    local pattern_trim = "{%%%-?%s*macro%s+" .. vim.pesc(word) .. "%s*%("
+
+    for _, sql_path in ipairs(sql_files) do
+      local content = utils.read_file(sql_path)
+      if content then
+        local lines = vim.split(content, "\n")
+        for i, line in ipairs(lines) do
+          if line:match(pattern) or line:match(pattern_trim) then
+            return { file = sql_path, line = i }
+          end
+        end
+      end
+    end
+  end
+
+  -- Try model file in models dir
+  local models_dir = project_path .. "/models"
+  if vim.fn.isdirectory(models_dir) == 1 then
+    local model_matches = vim.fn.globpath(models_dir, "**/" .. word .. ".sql", false, true)
+    if #model_matches > 0 then
+      return { file = model_matches[1], line = 1 }
+    end
   end
 
   return nil
@@ -194,7 +299,21 @@ function M.goto_definition()
 
   local ref = parse_reference_at_cursor()
   if not ref then
-    -- Not on a Jinja reference, fall back to native gd
+    -- Not on a Jinja reference — try word-under-cursor lookup
+    local word = vim.fn.expand("<cword>")
+    if word and word ~= "" and not is_builtin(word) then
+      local word_result = resolve_word(word)
+      if word_result then
+        vim.cmd("edit " .. vim.fn.fnameescape(word_result.file))
+        if word_result.line then
+          vim.api.nvim_win_set_cursor(0, { word_result.line, 0 })
+          vim.cmd("normal! zz")
+        end
+        return
+      end
+    end
+
+    -- Fall back to native gd
     local ok, _ = pcall(vim.cmd, "normal! gd")
     if not ok then
       vim.notify("dbt-forge: No definition found", vim.log.levels.INFO)
@@ -238,5 +357,6 @@ M._parse_reference_at_cursor = parse_reference_at_cursor
 M._resolve_ref = resolve_ref
 M._resolve_source = resolve_source
 M._resolve_macro = resolve_macro
+M._resolve_word = resolve_word
 
 return M
