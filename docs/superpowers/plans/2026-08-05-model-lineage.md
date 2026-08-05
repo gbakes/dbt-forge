@@ -292,11 +292,65 @@ The fixture lives under `tests/`, so specs need it on `lpath`. Update `.busted`:
         lpath = "lua/?.lua;lua/?/init.lua;tests/?.lua",
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Write the shared graph builder**
+
+Algorithm specs in Tasks 5, 10, 11 and 12 all need to build small graphs from
+adjacency pairs without depending on the fixture's particular shape. It lives
+here, shared, rather than being repeated in each spec file.
+
+Create `tests/fixtures/graph_builder.lua`:
+
+```lua
+-- Builds a manifest-shaped graph directly from adjacency pairs, for algorithm
+-- tests that should not depend on the manifest fixture's particular shape.
+--
+--   graph_builder({ { "a", "b" }, { "b", "c" } })  -- a → b → c
+--
+-- Node names double as unique_ids, which keeps assertions readable.
+return function(edges)
+  local nodes, parents, children = {}, {}, {}
+
+  local function ensure(id)
+    if not nodes[id] then
+      nodes[id] = {
+        name = id,
+        resource_type = "model",
+        materialized = "view",
+        path = id .. ".sql",
+        package = "test",
+      }
+      parents[id], children[id] = {}, {}
+    end
+  end
+
+  for _, edge in ipairs(edges) do
+    ensure(edge[1])
+    ensure(edge[2])
+    table.insert(children[edge[1]], edge[2])
+    table.insert(parents[edge[2]], edge[1])
+  end
+
+  for _, list in pairs(children) do
+    table.sort(list)
+  end
+  for _, list in pairs(parents) do
+    table.sort(list)
+  end
+
+  return { nodes = nodes, parents = parents, children = children, by_name = {} }
+end
+```
+
+- [ ] **Step 5: Confirm the builder loads**
+
+Run: `busted --lpath='lua/?.lua;tests/?.lua' -e 'local b = require("fixtures.graph_builder"); local g = b({{"a","b"}}); assert(g.children["a"][1] == "b", "builder broken"); print("builder ok")'`
+Expected: prints `builder ok`.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add tests/fixtures/manifest_fixture.lua .busted
-git commit -m "test: add manifest fixture mirroring dbt manifest v12 shape"
+git add tests/fixtures/manifest_fixture.lua tests/fixtures/graph_builder.lua .busted
+git commit -m "test: add manifest fixture and shared graph builder"
 ```
 
 ---
@@ -733,29 +787,10 @@ local lineage = require("dbt-forge.lineage")
 local manifest = require("dbt-forge.manifest")
 local fixture = require("fixtures.manifest_fixture")
 
+local graph_from_edges = require("fixtures.graph_builder")
+
 local ALL = { "model", "source", "seed", "snapshot", "exposure" }
 local FCT = "model.jaffle_shop.fct_orders"
-
--- Builds a graph directly from adjacency pairs, for algorithm tests that
--- should not depend on the fixture's particular shape.
-local function graph_from_edges(edges)
-  local nodes, parents, children = {}, {}, {}
-  local function ensure(id)
-    if not nodes[id] then
-      nodes[id] = { name = id, resource_type = "model", materialized = "view", path = id .. ".sql" }
-      parents[id], children[id] = {}, {}
-    end
-  end
-  for _, edge in ipairs(edges) do
-    ensure(edge[1])
-    ensure(edge[2])
-    table.insert(children[edge[1]], edge[2])
-    table.insert(parents[edge[2]], edge[1])
-  end
-  for _, list in pairs(children) do table.sort(list) end
-  for _, list in pairs(parents) do table.sort(list) end
-  return { nodes = nodes, parents = parents, children = children, by_name = {} }
-end
 
 describe("lineage.select", function()
   local graph
@@ -2160,24 +2195,7 @@ Append to `tests/dbt-forge/render_spec.lua`:
 ```lua
 describe("render.rail_rows", function()
   local lineage_mod = require("dbt-forge.lineage")
-
-  local function graph_from_edges(edges)
-    local nodes, parents, children = {}, {}, {}
-    local function ensure(id)
-      if not nodes[id] then
-        nodes[id] = { name = id, resource_type = "model", materialized = "view", path = id .. ".sql" }
-        parents[id], children[id] = {}, {}
-      end
-    end
-    for _, edge in ipairs(edges) do
-      ensure(edge[1]); ensure(edge[2])
-      table.insert(children[edge[1]], edge[2])
-      table.insert(parents[edge[2]], edge[1])
-    end
-    for _, l in pairs(children) do table.sort(l) end
-    for _, l in pairs(parents) do table.sort(l) end
-    return { nodes = nodes, parents = parents, children = children, by_name = {} }
-  end
+  local graph_from_edges = require("fixtures.graph_builder")
 
   it("emits one node row per graph node", function()
     local g = graph_from_edges({ { "a", "b" }, { "b", "c" } })
@@ -2365,14 +2383,277 @@ git commit -m "feat: render lineage as a vertical rail graph"
 
 ---
 
-### Task 13: Manual verification and documentation
+### Task 13: Headless end-to-end test
 
-Every prior task was verified against a hand-written fixture. This task is the only check that the code works against a manifest dbt actually produced — do not skip it.
+Every prior task tests a module in isolation against a hand-written fixture.
+Nothing yet proves the pieces work together: that `:DbtLineage` on a real buffer,
+against a real `manifest.json` on disk, opens a window with the right content.
+
+This test fabricates a manifest on disk, drives headless Neovim, and asserts the
+resulting buffer. It needs no dbt install and no database.
+
+**Files:**
+- Create: `tests/integration/lineage_e2e.lua`
+- Create: `tests/integration/run.sh`
+
+**Interfaces:**
+- Consumes: everything — `init.show_lineage` (Task 8), the full render path (Task 12).
+
+- [ ] **Step 1: Write the failing harness**
+
+Create `tests/integration/lineage_e2e.lua`. This runs *inside* headless Neovim,
+so the real `vim` API is available and `tests/helper.lua` must NOT be loaded.
+
+```lua
+-- End-to-end check: fabricate a dbt project on disk, open a model, run
+-- :DbtLineage, and assert what lands in the sidebar buffer.
+--
+-- Run via tests/integration/run.sh. Exits non-zero on the first failure.
+
+local failures = {}
+
+local function check(ok, message)
+  if not ok then
+    table.insert(failures, message)
+  end
+end
+
+local function contains(haystack, needle)
+  return haystack:find(needle, 1, true) ~= nil
+end
+
+-- Build a throwaway dbt project: dbt_project.yml, two model files, and a
+-- manifest.json describing a diamond through an ephemeral model.
+local root = vim.fn.tempname()
+vim.fn.mkdir(root .. "/models/marts", "p")
+vim.fn.mkdir(root .. "/models/staging", "p")
+vim.fn.mkdir(root .. "/target", "p")
+
+vim.fn.writefile({ "name: jaffle_shop", "version: '1.0'" }, root .. "/dbt_project.yml")
+vim.fn.writefile({ "select 1 as order_id" }, root .. "/models/marts/fct_orders.sql")
+vim.fn.writefile({ "select 1 as order_id" }, root .. "/models/staging/stg_orders.sql")
+vim.fn.writefile({ "select 1 as customer_id" }, root .. "/models/marts/dim_customers.sql")
+
+local manifest = {
+  metadata = { project_name = "jaffle_shop" },
+  nodes = {
+    ["model.jaffle_shop.stg_orders"] = {
+      name = "stg_orders", resource_type = "model", package_name = "jaffle_shop",
+      original_file_path = "models/staging/stg_orders.sql",
+      config = { materialized = "view" },
+    },
+    ["model.jaffle_shop.int_pivot"] = {
+      name = "int_pivot", resource_type = "model", package_name = "jaffle_shop",
+      original_file_path = "models/staging/int_pivot.sql",
+      config = { materialized = "ephemeral" },
+    },
+    ["model.jaffle_shop.fct_orders"] = {
+      name = "fct_orders", resource_type = "model", package_name = "jaffle_shop",
+      original_file_path = "models/marts/fct_orders.sql",
+      config = { materialized = "table" },
+    },
+    ["model.jaffle_shop.dim_customers"] = {
+      name = "dim_customers", resource_type = "model", package_name = "jaffle_shop",
+      original_file_path = "models/marts/dim_customers.sql",
+      config = { materialized = "table" },
+    },
+    ["test.jaffle_shop.unique_order_id.abc"] = {
+      name = "unique_order_id", resource_type = "test", package_name = "jaffle_shop",
+      original_file_path = "models/marts/schema.yml", config = {},
+    },
+  },
+  sources = {
+    ["source.jaffle_shop.jaffle.orders"] = {
+      name = "orders", source_name = "jaffle", resource_type = "source",
+      package_name = "jaffle_shop", original_file_path = "models/staging/sources.yml",
+    },
+  },
+  exposures = {},
+  parent_map = {
+    ["source.jaffle_shop.jaffle.orders"] = {},
+    ["model.jaffle_shop.stg_orders"] = { "source.jaffle_shop.jaffle.orders" },
+    ["model.jaffle_shop.int_pivot"] = { "model.jaffle_shop.stg_orders" },
+    ["model.jaffle_shop.fct_orders"] = {
+      "model.jaffle_shop.stg_orders", "model.jaffle_shop.int_pivot",
+    },
+    ["model.jaffle_shop.dim_customers"] = { "model.jaffle_shop.fct_orders" },
+    ["test.jaffle_shop.unique_order_id.abc"] = { "model.jaffle_shop.fct_orders" },
+  },
+  child_map = {
+    ["source.jaffle_shop.jaffle.orders"] = { "model.jaffle_shop.stg_orders" },
+    ["model.jaffle_shop.stg_orders"] = {
+      "model.jaffle_shop.fct_orders", "model.jaffle_shop.int_pivot",
+    },
+    ["model.jaffle_shop.int_pivot"] = { "model.jaffle_shop.fct_orders" },
+    ["model.jaffle_shop.fct_orders"] = {
+      "model.jaffle_shop.dim_customers", "test.jaffle_shop.unique_order_id.abc",
+    },
+    ["model.jaffle_shop.dim_customers"] = {},
+  },
+}
+
+vim.fn.writefile({ vim.json.encode(manifest) }, root .. "/target/manifest.json")
+
+require("dbt-forge").setup({
+  dbt_project_path = root,
+  python_env_manager = "none",
+  lineage = { up_depth = 2, down_depth = 2, width = 48, follow = true },
+})
+
+vim.cmd("edit " .. root .. "/models/marts/fct_orders.sql")
+local editing_win = vim.api.nvim_get_current_win()
+
+vim.cmd("DbtLineage")
+
+local view = require("dbt-forge.lineage_view")
+check(view.is_open(), "sidebar did not open")
+
+local sidebar_win = vim.api.nvim_get_current_win()
+check(sidebar_win ~= editing_win, "focus stayed in the editing window")
+check(
+  vim.api.nvim_win_get_width(sidebar_win) == 48,
+  "sidebar width is " .. vim.api.nvim_win_get_width(sidebar_win) .. ", expected 48"
+)
+
+local buf = vim.api.nvim_win_get_buf(sidebar_win)
+local body = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+
+check(contains(body, "◉"), "no root glyph in buffer")
+check(contains(body, "●"), "no node glyph in buffer")
+check(contains(body, "fct_orders"), "root model missing")
+check(contains(body, "stg_orders"), "upstream model missing")
+check(contains(body, "dim_customers"), "downstream model missing")
+check(contains(body, "int_pivot"), "ephemeral model missing")
+check(contains(body, "ephemeral"), "ephemeral materialization label missing")
+check(contains(body, "jaffle.orders"), "source not named source_name.table_name")
+check(not contains(body, "unique_order_id"), "test node leaked into the graph")
+
+check(
+  contains(vim.wo[sidebar_win].winbar, "fct_orders"),
+  "winbar missing the model name"
+)
+check(contains(vim.wo[sidebar_win].winbar, "↑2 ↓2"), "winbar missing depths")
+
+-- `-` narrows to one hop each way, which must drop the two-hop source.
+vim.api.nvim_set_current_win(sidebar_win)
+vim.api.nvim_feedkeys("-", "x", false)
+local narrowed = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+check(not contains(narrowed, "jaffle.orders"), "- did not narrow the graph")
+
+vim.api.nvim_feedkeys("+", "x", false)
+local widened = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+check(contains(widened, "jaffle.orders"), "+ did not widen the graph")
+
+-- <CR> on a node opens that model in the editing window.
+local target_line
+for i, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+  if contains(line, "dim_customers") then
+    target_line = i
+  end
+end
+check(target_line ~= nil, "could not find dim_customers row")
+
+if target_line then
+  vim.api.nvim_set_current_win(sidebar_win)
+  vim.api.nvim_win_set_cursor(sidebar_win, { target_line, 0 })
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "x", false)
+  check(
+    contains(vim.api.nvim_buf_get_name(0), "dim_customers.sql"),
+    "<CR> opened " .. vim.api.nvim_buf_get_name(0) .. ", expected dim_customers.sql"
+  )
+  check(view.is_open(), "sidebar closed after <CR>")
+end
+
+-- Re-rooting on the node under the cursor.
+vim.api.nvim_set_current_win(sidebar_win)
+for i, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+  if contains(line, "stg_orders") then
+    vim.api.nvim_win_set_cursor(sidebar_win, { i, 0 })
+    break
+  end
+end
+vim.api.nvim_feedkeys("r", "x", false)
+check(
+  contains(vim.wo[sidebar_win].winbar, "stg_orders"),
+  "r did not re-root the graph"
+)
+
+-- The mtime cache: a second load of an unchanged manifest must return the
+-- identical table, not a fresh projection.
+local manifest_mod = require("dbt-forge.manifest")
+local include = { "model", "source", "seed", "snapshot", "exposure" }
+local first = manifest_mod.load(root, include)
+local second = manifest_mod.load(root, include)
+check(rawequal(first, second), "mtime cache returned a different table")
+
+if #failures > 0 then
+  io.stderr:write("FAIL (" .. #failures .. ")\n")
+  for _, message in ipairs(failures) do
+    io.stderr:write("  - " .. message .. "\n")
+  end
+  vim.cmd("cquit 1")
+end
+
+print("integration: all checks passed")
+vim.cmd("qa!")
+```
+
+- [ ] **Step 2: Write the runner**
+
+Create `tests/integration/run.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Drives the lineage end-to-end test in headless Neovim.
+# Exits non-zero if any check fails.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+nvim --headless --clean \
+  --cmd "set runtimepath+=${repo_root}" \
+  -l "${repo_root}/tests/integration/lineage_e2e.lua"
+```
+
+Then: `chmod +x tests/integration/run.sh`
+
+- [ ] **Step 3: Run it**
+
+Run: `./tests/integration/run.sh`
+Expected: prints `integration: all checks passed` and exits 0.
+
+If it fails, the failure list names each broken check. Fix the underlying code —
+do not weaken the assertions.
+
+- [ ] **Step 4: Confirm the unit suite still passes**
+
+Run: `busted`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/integration/
+git commit -m "test: add headless end-to-end test for the lineage sidebar"
+```
+
+---
+
+### Task 14: Manual verification and documentation
+
+Task 13 proves the pieces work together against a fabricated manifest. This task
+covers what automation cannot check: whether the rails are actually legible on a
+real project's DAG.
 
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Verify against a real dbt project**
+**Note:** Steps 1 and 2 require a real dbt project and cannot be completed in
+this repository. If no such project is reachable, mark them as deferred in the
+report and complete Step 3 — the human partner will run the visual checks after
+merge.
+
+- [ ] **Step 1: Verify against a real dbt project (deferred if unavailable)**
 
 In a real dbt project with a populated `target/manifest.json`, open a model with both upstream and downstream dependencies and run `:DbtLineage`. Confirm each of:
 

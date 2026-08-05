@@ -1,0 +1,10 @@
+# Claude Code local state
+.claude/worktrees/
+.claude/settings.local.json
+
+# Subagent-driven-development scratch (ledgers, briefs, review packages)
+.superpowers/
+
+# Lua
+luarocks/
+*.rock
