@@ -128,19 +128,18 @@ project-relative path.
    points *downward* in the buffer, so no rail ever routes backwards.
 4. **Assign lanes** — the git-graph algorithm:
 
+A free lane is `false`, never `nil`: `#t` on a table with `nil` holes is
+undefined in Lua, and this algorithm indexes by `#lanes` throughout.
+
 ```
-lanes = []      -- lanes[i] = pending target unique_id, or nil if free
+FREE  = false
+lanes = []      -- lanes[i] = pending target unique_id, or FREE
 rows  = []
 
 for n in topo_order:
-    -- claim a lane: leftmost lane already targeting n
-    my, merges = nil, []
-    for i, target in lanes:
-        if target == n:
-            if my == nil then my = i
-            else merges.push(i); lanes[i] = nil    -- converging edge
-    if my == nil then my = first_free_index(lanes)
-    lanes[my] = nil                                -- consumed
+    -- claim the lane opened for n by whichever parent got there first
+    my = index_of_lane_targeting(lanes, n) or first_free_index(lanes)
+    lanes[my] = FREE                               -- consumed
 
     pre_lanes = snapshot(lanes)                    -- for pass-through rendering
 
@@ -152,16 +151,22 @@ for n in topo_order:
             -- k already has a lane from another parent (diamond):
             -- connect across, do not allocate
             if existing ~= my then splits.push(existing)
-        elseif lanes[my] == nil then
+        elseif lanes[my] == FREE then
             lanes[my] = k                          -- first child continues my lane
         else
             j = first_free_index(lanes); lanes[j] = k; splits.push(j)
 
-    rows.push{ id = n, lane = my, lanes = pre_lanes, merges = merges,
-               splits = splits, depth = depth[n], is_root = (n == root_id) }
-
-trim trailing free lanes
+    trim trailing FREE lanes
+    rows.push{ id = n, lane = my, lanes = pre_lanes, splits = splits,
+               depth = depth[n], is_root = (n == root_id) }
 ```
+
+**There is deliberately no `merges` output.** An earlier draft collected
+converging lanes separately, but that branch is unreachable: because we reuse an
+already-open lane rather than allocating a second one, and topological order
+guarantees a node's lane stays open until the node itself is emitted, two lanes
+can never target the same node. Convergence appears as a `split` into a lane
+that already existed.
 
 Lanes held open across intermediate rows render as `│` pass-throughs. Output is
 data only — no strings, no buffer calls.
@@ -170,9 +175,11 @@ data only — no strings, no buffer calls.
 
 - `topleft vsplit`, `winfixwidth`, width from config (default 48). Scratch
   buffer, `nomodifiable`, `nowrap`, `cursorline`, `filetype=dbtlineage`.
-- A pure `format_row()` builds the line text (also testable); colour is applied
-  separately with `nvim_buf_set_extmark`, not syntax matching — per-cell
-  precision is needed to colour rails differently from names on the same line.
+- Line text and highlight spans come from a **separate dependency-free
+  `lua/dbt-forge/render.lua`** (`render.format(graph, row, width) -> text,
+  spans`), so no buffer or window call sits in the tested path. Colour is
+  applied with `nvim_buf_set_extmark`, not syntax matching — per-cell precision
+  is needed to colour rails differently from names on the same line.
 - Status goes in the **winbar**, not a buffer line:
   `fct_orders · ↑2 ↓2 · 8 nodes · manifest 14m old`.
 - Highlight groups link to stock groups so colorschemes work untouched:
@@ -268,16 +275,23 @@ Specs go in `tests/dbt-forge/`, following the existing `config_spec.lua` /
   diamond re-convergence into an existing lane
 - root pinning and `is_root` flag
 
-`manifest_spec.lua` — projection from a small hand-written fixture manifest in
-`tests/fixtures/`:
+`manifest_spec.lua` — projection from `tests/fixtures/manifest_fixture.lua`, a
+hand-written **Lua table** mirroring real manifest v12 shape rather than a
+`.json` file. Keeping the fixture as a table removes any need to decode JSON —
+and therefore to stub `vim.json` — inside specs:
 
 - tests and macros excluded from both nodes and dependency maps
 - ephemeral models retained with `materialized == "ephemeral"`
+- models with no configured materialization defaulting to `view`
 - sources labelled and named as `source_name.name`
-- mtime caching returns the identical table on an unchanged file
+- the `include` list driving which resource types survive
 
-Render-layer coverage asserts `format_row()` output strings for a known graph,
-keeping buffer and window calls out of the tested path.
+Because the fixture is hand-written, nothing in the suite proves the code
+handles a manifest dbt actually emitted; a manual verification pass against a
+real project closes that gap.
+
+`render_spec.lua` asserts `render.format()` output strings and highlight spans
+for a known graph, keeping buffer and window calls out of the tested path.
 
 **Note:** `busted` is not currently installed in this environment, so the
 existing specs cannot be run as-is. Installing it (`luarocks install busted`)
@@ -292,6 +306,6 @@ feature.
 
 **Phase 2** — add `lineage.lua`'s topological sort and lane assignment, and swap
 the renderer. Because both phases produce rows plus a `line_to_node` map, phase
-2 touches only the row builder and `format_row`: window management, keymaps,
+2 touches only the row builder in `render.lua`: window management, keymaps,
 highlights, `<CR>`, re-root, depth adjustment and follow all carry over
 unchanged.
