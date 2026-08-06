@@ -7,6 +7,24 @@ vim.fn = vim.fn or {}
 vim.log = vim.log or { levels = { ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4, TRACE = 5 } }
 vim.notify = vim.notify or function() end
 
+vim.loop = vim.loop or {}
+-- Real fs_stat, minus the fields we do not use. Specs that need a specific
+-- stat result override this.
+vim.loop.fs_stat = vim.loop.fs_stat or function(path)
+  local handle = io.open(path, "r")
+  if not handle then
+    return nil
+  end
+  local size = handle:seek("end")
+  handle:close()
+  return { size = size, mtime = { sec = 0 } }
+end
+
+vim.json = vim.json or {}
+vim.json.decode = vim.json.decode or function()
+  error("vim.json.decode is not stubbed; specs should use the Lua fixture instead")
+end
+
 -- Inert defaults for the vim.fn surface reached via config.setup() ->
 -- utils.get_project_config() (find_dbt_project_path / detect_python_env).
 -- Each returns the "nothing found" value for its real vim.fn counterpart, so

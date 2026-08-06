@@ -104,3 +104,43 @@ describe("manifest.project", function()
     end)
   end)
 end)
+
+describe("manifest.resolve", function()
+  local ALL_TYPES = { "model", "source", "seed", "snapshot", "exposure" }
+
+  it("resolves an unambiguous name", function()
+    local graph = manifest.project(fixture(), ALL_TYPES)
+    assert.are.equal(
+      "model.jaffle_shop.fct_orders",
+      manifest.resolve(graph, "fct_orders", "models/marts/fct_orders.sql")
+    )
+  end)
+
+  it("disambiguates same-named models by file path", function()
+    local raw = fixture()
+    raw.nodes["model.other_pkg.fct_orders"] = {
+      name = "fct_orders", resource_type = "model", package_name = "other_pkg",
+      original_file_path = "models/other/fct_orders.sql",
+      config = { materialized = "table" },
+    }
+    local graph = manifest.project(raw, ALL_TYPES)
+    assert.are.equal(
+      "model.other_pkg.fct_orders",
+      manifest.resolve(graph, "fct_orders", "models/other/fct_orders.sql")
+    )
+  end)
+
+  it("returns nil for an unknown name", function()
+    local graph = manifest.project(fixture(), ALL_TYPES)
+    assert.is_nil(manifest.resolve(graph, "no_such_model", "models/nope.sql"))
+  end)
+end)
+
+describe("manifest.load", function()
+  it("reports a missing manifest rather than erroring", function()
+    local graph, err = manifest.load("/definitely/not/a/dbt/project", { "model" })
+    assert.is_nil(graph)
+    assert.is_string(err)
+    assert.is_truthy(err:find("dbt parse"))
+  end)
+end)
