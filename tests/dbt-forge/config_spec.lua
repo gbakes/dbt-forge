@@ -28,7 +28,7 @@ describe("config", function()
             assert.are.equal(15, config.options.ui.split_size)
         end)
 
-        it("should show error when dbt_project_path not provided", function()
+        it("should warn when dbt_project_path not provided", function()
             local notify_called = false
             local notify_level = nil
 
@@ -37,12 +37,14 @@ describe("config", function()
                 notify_level = level
             end
 
-            vim.log = { levels = { ERROR = "error" } }
+            vim.log = { levels = { ERROR = "error", WARN = "warn" } }
 
             config.setup()
 
             assert.is_true(notify_called)
-            assert.are.equal("error", notify_level)
+            -- A missing dbt_project.yml is a warning, not an error: the
+            -- plugin still loads and its other features still work.
+            assert.are.equal("warn", notify_level)
         end)
     end)
 end)

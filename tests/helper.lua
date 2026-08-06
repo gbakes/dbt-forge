@@ -7,6 +7,52 @@ vim.fn = vim.fn or {}
 vim.log = vim.log or { levels = { ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4, TRACE = 5 } }
 vim.notify = vim.notify or function() end
 
+-- Inert defaults for the vim.fn surface reached via config.setup() ->
+-- utils.get_project_config() (find_dbt_project_path / detect_python_env).
+-- Each returns the "nothing found" value for its real vim.fn counterpart, so
+-- auto-detection cleanly finds no project/env and setup() falls through to
+-- whatever the caller passed in explicitly. Specs that need richer behaviour
+-- assign these fields directly (plain assignment, not `or`), which always
+-- wins over these defaults because this file runs once, first, as the
+-- busted helper.
+
+vim.fn.expand = vim.fn.expand or function()
+  return ""
+end
+
+vim.fn.filereadable = vim.fn.filereadable or function()
+  return 0
+end
+
+vim.fn.fnamemodify = vim.fn.fnamemodify or function(path, mods)
+  if mods == ":h" then
+    -- Empty/root paths have no parent left to walk up to; returning "/"
+    -- gives find_dbt_project_path's loop a place to stop.
+    if path == "" or path == "/" then
+      return "/"
+    end
+    local head = path:match("^(.*)/[^/]+$")
+    return (head ~= nil and head ~= "") and head or "/"
+  end
+  return path
+end
+
+vim.fn.finddir = vim.fn.finddir or function()
+  return ""
+end
+
+vim.fn.findfile = vim.fn.findfile or function()
+  return ""
+end
+
+vim.fn.isdirectory = vim.fn.isdirectory or function()
+  return 0
+end
+
+vim.fn.readdir = vim.fn.readdir or function()
+  return {}
+end
+
 local function deepcopy(v)
   if type(v) ~= "table" then
     return v
