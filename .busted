@@ -5,6 +5,7 @@ return {
     default = {
         ROOT = { "tests/" },
         pattern = "_spec",
+        lpath = "lua/?.lua;lua/?/init.lua",
+        helper = "tests/helper.lua",
     },
 }
-
