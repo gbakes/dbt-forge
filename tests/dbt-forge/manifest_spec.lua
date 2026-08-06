@@ -68,6 +68,34 @@ describe("manifest.project", function()
     assert.are.same({ "model.jaffle_shop.fct_orders" }, graph.by_name["fct_orders"])
   end)
 
+  it("filters map KEYS: excluded node ids never appear as map keys", function()
+    -- The fixture has parent_map["test.jaffle_shop.unique_fct_orders_order_id.abc123"]
+    -- present in the raw manifest. If the KEY-side filter is missing, the test id
+    -- would appear as a map key. This invariant catches it.
+    assert.is_nil(graph.parents["test.jaffle_shop.unique_fct_orders_order_id.abc123"])
+    assert.is_nil(graph.children["test.jaffle_shop.unique_fct_orders_order_id.abc123"])
+
+    -- General: all map keys are retained nodes.
+    for uid in pairs(graph.parents) do
+      assert.is_not_nil(graph.nodes[uid], "parents key " .. uid .. " not in nodes")
+    end
+    for uid in pairs(graph.children) do
+      assert.is_not_nil(graph.nodes[uid], "children key " .. uid .. " not in nodes")
+    end
+  end)
+
+  it("indexes sources by raw name, not display name", function()
+    -- Source raw name is "orders", display name is "jaffle.orders".
+    -- by_name must use raw name so Task 4's filename resolution works.
+    local source_uid = "source.jaffle_shop.jaffle.orders"
+    assert.are.same({ source_uid }, graph.by_name["orders"],
+      "by_name should key on raw name 'orders'")
+    assert.is_nil(graph.by_name["jaffle.orders"],
+      "by_name should NOT key on display name 'jaffle.orders'")
+    assert.are.equal("jaffle.orders", graph.nodes[source_uid].name,
+      "node.name should be display form 'jaffle.orders'")
+  end)
+
   describe("the include list drives filtering", function()
     it("drops excluded types and any edges touching them", function()
       local models_only = manifest.project(fixture(), { "model" })
