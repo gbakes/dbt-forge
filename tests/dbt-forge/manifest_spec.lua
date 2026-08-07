@@ -137,10 +137,149 @@ describe("manifest.resolve", function()
 end)
 
 describe("manifest.load", function()
+  local original_fs_stat, original_json_decode, original_read_file
+  local utils = require("dbt-forge.utils")
+  local state = { mtime = 1000, size = 1000, decode_fails = 0 }
+
+  before_each(function()
+    manifest.invalidate()
+    original_fs_stat = vim.loop.fs_stat
+    original_json_decode = vim.json.decode
+    original_read_file = utils.read_file
+    state = { mtime = 1000, size = 1000, decode_fails = 0 }
+
+    -- Mock fs_stat to return controllable mtime
+    vim.loop.fs_stat = function(path)
+      if path:find("/tmp/") and path:find("target/manifest.json") then
+        return { size = state.size, mtime = { sec = state.mtime } }
+      end
+      return nil
+    end
+
+    -- Mock json.decode to return fixture or error
+    vim.json.decode = function(content)
+      if state.decode_fails > 0 then
+        state.decode_fails = state.decode_fails - 1
+        error("Simulated decode failure")
+      end
+      return fixture()
+    end
+
+    -- Mock read_file to return dummy content (decode will use fixture instead)
+    utils.read_file = function(path)
+      if path:find("/tmp/") and path:find("target/manifest.json") then
+        return "{}"  -- Content doesn't matter; vim.json.decode is mocked
+      end
+      return nil
+    end
+  end)
+
+  after_each(function()
+    vim.loop.fs_stat = original_fs_stat
+    vim.json.decode = original_json_decode
+    utils.read_file = original_read_file
+    manifest.invalidate()
+  end)
+
   it("reports a missing manifest rather than erroring", function()
     local graph, err = manifest.load("/definitely/not/a/dbt/project", { "model" })
     assert.is_nil(graph)
     assert.is_string(err)
     assert.is_truthy(err:find("dbt parse"))
+  end)
+
+  it("successfully loads and returns a graph with mtime field", function()
+    local graph = manifest.load("/tmp/dbt/project", ALL)
+    assert.is_not_nil(graph)
+    assert.is_table(graph.nodes)
+    assert.is_table(graph.by_name)
+    assert.is_equal(state.mtime, graph.mtime)
+  end)
+
+  it("returns identical cached table on unchanged path+mtime", function()
+    local graph1 = manifest.load("/tmp/dbt/project", ALL)
+    local graph2 = manifest.load("/tmp/dbt/project", ALL)
+    -- rawequal checks object identity, not deep equality
+    assert.is_true(rawequal(graph1, graph2))
+  end)
+
+  it("cache MISses when mtime changes", function()
+    local graph1 = manifest.load("/tmp/dbt/project", ALL)
+    state.mtime = 2000
+    local graph2 = manifest.load("/tmp/dbt/project", ALL)
+    -- Different mtimes means different cache entries
+    assert.is_false(rawequal(graph1, graph2))
+    assert.is_equal(2000, graph2.mtime)
+  end)
+
+  it("cache MISses when path changes, even if mtime unchanged", function()
+    local graph1 = manifest.load("/tmp/project-a", ALL)
+    local graph2 = manifest.load("/tmp/project-b", ALL)
+    -- Different paths means different cache entries, even though mtime is the same
+    assert.is_false(rawequal(graph1, graph2))
+  end)
+
+  it("invalidate() forces next load to re-read", function()
+    local graph1 = manifest.load("/tmp/dbt/project", ALL)
+    manifest.invalidate()
+    local graph2 = manifest.load("/tmp/dbt/project", ALL)
+    -- After invalidate, even with same path+mtime, cache is cleared
+    assert.is_false(rawequal(graph1, graph2))
+  end)
+
+  it("decode failure with populated cache returns last good copy", function()
+    local graph1 = manifest.load("/tmp/dbt/project", ALL)
+    state.decode_fails = 1
+    state.mtime = 2000
+    local graph2, err = manifest.load("/tmp/dbt/project", ALL)
+    -- Should return the cached good copy, not an error
+    assert.is_not_nil(graph2)
+    assert.is_nil(err)
+    assert.is_true(rawequal(graph1, graph2))
+  end)
+
+  it("decode failure with empty cache returns error", function()
+    state.decode_fails = 1
+    local graph, err = manifest.load("/tmp/dbt/project", ALL)
+    assert.is_nil(graph)
+    assert.is_string(err)
+    assert.is_truthy(err:find("decode"))
+  end)
+
+  it("warns when manifest exceeds 100MB", function()
+    state.size = 150 * 1024 * 1024
+    local notify_called = false
+    local notify_message = ""
+    local original_notify = vim.notify
+    vim.notify = function(msg, level)
+      notify_called = true
+      notify_message = msg
+    end
+
+    local graph = manifest.load("/tmp/dbt/project", ALL)
+    vim.notify = original_notify
+
+    assert.is_true(notify_called)
+    assert.is_truthy(notify_message:find("150"))
+    assert.is_not_nil(graph)
+  end)
+end)
+
+describe("manifest.resolve", function()
+  local ALL_TYPES = { "model", "source", "seed", "snapshot", "exposure" }
+
+  it("returns first candidate when no path matches", function()
+    local raw = fixture()
+    raw.nodes["model.other_pkg.fct_orders"] = {
+      name = "fct_orders", resource_type = "model", package_name = "other_pkg",
+      original_file_path = "models/other/fct_orders.sql",
+      config = { materialized = "table" },
+    }
+    local graph = manifest.project(raw, ALL_TYPES)
+    -- Request a path that does not exist in either model
+    local result = manifest.resolve(graph, "fct_orders", "models/nonexistent.sql")
+    -- Should return the first candidate (sorted deterministically in by_name)
+    assert.is_not_nil(result)
+    assert.is_string(result)
   end)
 end)
