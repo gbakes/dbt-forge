@@ -130,4 +130,49 @@ describe("render.format", function()
     local text = render.format(g, { kind = "node", id = "x", gutter = "", is_root = false }, 48)
     assert.is_true(utf8_len(text) <= 48)
   end)
+
+  it("never exceeds width with deep gutter plus long tag", function()
+    local utf8_len = function(s)
+      local _, count = s:gsub("[^\128-\191]", "")
+      return count
+    end
+    local gutter = "│  │  │  │  ├─ "
+    local g = { nodes = { ["x"] = {
+      name = "orders", resource_type = "model",
+      materialized = "incremental", path = "x.sql",
+    } } }
+    local text = render.format(g, { kind = "node", id = "x", gutter = gutter, is_root = false }, 20)
+    assert.is_true(utf8_len(text) <= 20, "overflow: " .. utf8_len(text) .. " > 20")
+  end)
+
+  it("width invariant: character count never exceeds width across range", function()
+    local utf8_len = function(s)
+      local _, count = s:gsub("[^\128-\191]", "")
+      return count
+    end
+    local g = { nodes = { ["x"] = {
+      name = "model_name", resource_type = "model",
+      materialized = "table", path = "x.sql",
+    } } }
+    for _, width in ipairs({ 12, 20, 30, 48, 80 }) do
+      local gutter = string.rep("│  ", 5)
+      local text = render.format(g, { kind = "node", id = "x", gutter = gutter, is_root = false }, width)
+      assert.is_true(utf8_len(text) <= width, "width=" .. width .. " exceeded with " .. utf8_len(text) .. " chars")
+    end
+  end)
+
+  it("highlight spans stay within text byte bounds after truncation", function()
+    local g = { nodes = { ["x"] = {
+      name = "a_very_long_model_name_here", resource_type = "model",
+      materialized = "incremental", path = "x.sql",
+    } } }
+    local text, spans = render.format(g, {
+      kind = "node", id = "x", gutter = "│  │  ├─ ", is_root = false
+    }, 20)
+    local max_byte = #text
+    for _, span in ipairs(spans) do
+      local end_col = span[3]
+      assert.is_true(end_col <= max_byte, "span end " .. end_col .. " exceeds text length " .. max_byte)
+    end
+  end)
 end)

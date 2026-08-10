@@ -70,27 +70,41 @@ function M.format(graph, row, width)
   table.insert(spans, { hl_for(node, row.is_root), col, col + #glyph })
   col = col + #glyph + 1
 
-  -- Reserve room for " " .. materialization on the right, but never let the
-  -- name shrink below something readable.
+  -- Calculate space for name. Width must be guaranteed to never be exceeded.
   local tag = node.materialized
-  local used = utf8_len(gutter) + utf8_len(glyph) + 1
-  local name_budget = math.max(8, width - used - utf8_len(tag) - 1)
+  local used_prefix = utf8_len(gutter) + utf8_len(glyph) + 1  -- gutter + glyph + space
+  local tag_len = utf8_len(tag)
+
+  -- Space available for name and padding: width - prefix - tag - (space before tag)
+  -- But don't allocate negative space; if we're already over, name gets 0.
+  local space_for_middle = math.max(0, width - used_prefix - tag_len - 1)
 
   local name = node.name
-  if utf8_len(name) > name_budget then
-    name = utf8_sub(name, name_budget - 1) .. "…"
+  if space_for_middle > 0 and utf8_len(name) > space_for_middle then
+    name = utf8_sub(name, space_for_middle - 1) .. "…"
+  elseif space_for_middle <= 0 then
+    name = ""
   end
 
   table.insert(spans, { hl_for(node, row.is_root), col, col + #name })
 
   local text = gutter .. glyph .. " " .. name
-  local pad = width - utf8_len(text) - utf8_len(tag)
-  if pad < 1 then
-    pad = 1
+  local pad = width - utf8_len(text) - tag_len
+  if pad < 0 then
+    pad = 0
   end
   local tag_col = #text + pad
   text = text .. string.rep(" ", pad) .. tag
-  table.insert(spans, { "DbtForgeLineageMaterialization", tag_col, tag_col + #tag })
+
+  -- FINAL INVARIANT: Ensure text never exceeds width (character count)
+  if utf8_len(text) > width then
+    text = utf8_sub(text, width)
+  end
+
+  -- Add materialization tag highlight, clipped to text bounds
+  if tag_col < #text then
+    table.insert(spans, { "DbtForgeLineageMaterialization", tag_col, math.min(tag_col + #tag, #text) })
+  end
 
   return text, spans
 end
