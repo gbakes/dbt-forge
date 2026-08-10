@@ -175,4 +175,44 @@ describe("render.format", function()
       assert.is_true(end_col <= max_byte, "span end " .. end_col .. " exceeds text length " .. max_byte)
     end
   end)
+
+  it("both invariants hold across exhaustive property sweep", function()
+    local utf8_len = function(s)
+      local _, count = s:gsub("[^\128-\191]", "")
+      return count
+    end
+    local node_specs = {
+      short = { name="fct", resource_type="model", materialized="table", path="a.sql" },
+      long  = { name=string.rep("very_long_model_name_",6), resource_type="model", materialized="incremental", path="b.sql" },
+      eph   = { name="int_payments_pivoted_wide", resource_type="model", materialized="ephemeral", path="c.sql" },
+      src   = { name="jaffle.orders_with_a_long_table", resource_type="source", materialized="source", path="d.yml" },
+    }
+    local gutters = { "", "├─ ", "│  ├─ ", "│  │  ├─ ", "│  │  │  ├─ ", "│  │  │  │  ├─ ", string.rep("│  ",10).."└─ " }
+    local widths  = { 5, 8, 12, 20, 30, 48, 80 }
+
+    for node_id, node_spec in pairs(node_specs) do
+      for _, gutter in ipairs(gutters) do
+        for _, width in ipairs(widths) do
+          local g = { nodes = { x = node_spec } }
+          local text, spans = render.format(g, { kind="node", id="x", gutter=gutter, is_root=false }, width)
+
+          -- Invariant 1: character count never exceeds width
+          assert.is_true(utf8_len(text) <= width,
+            "overflow: w=" .. width .. " gutter=" .. utf8_len(gutter) .. "ch id=" .. node_id ..
+            " -> " .. utf8_len(text) .. " chars")
+
+          -- Invariant 2: all spans end within text bounds
+          for _, span in ipairs(spans) do
+            local hl_group, start_col, end_col = span[1], span[2], span[3]
+            assert.is_true(start_col < #text or #text == 0,
+              "dangling span start: w=" .. width .. " gutter=" .. utf8_len(gutter) ..
+              "ch id=" .. node_id .. " start=" .. start_col .. " >= #text=" .. #text)
+            assert.is_true(end_col <= #text,
+              "dangling span end: w=" .. width .. " gutter=" .. utf8_len(gutter) ..
+              "ch id=" .. node_id .. " " .. hl_group .. " end=" .. end_col .. " > #text=" .. #text)
+          end
+        end
+      end
+    end
+  end)
 end)

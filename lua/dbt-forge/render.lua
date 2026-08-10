@@ -101,12 +101,24 @@ function M.format(graph, row, width)
     text = utf8_sub(text, width)
   end
 
-  -- Add materialization tag highlight, clipped to text bounds
-  if tag_col < #text then
-    table.insert(spans, { "DbtForgeLineageMaterialization", tag_col, math.min(tag_col + #tag, #text) })
+  -- Add materialization tag highlight
+  table.insert(spans, { "DbtForgeLineageMaterialization", tag_col, tag_col + #tag })
+
+  -- Clip all spans to final text bounds: ensure 0 <= start_col <= end_col <= #text
+  -- After truncation, some spans may point past the end. Drop those that start outside,
+  -- and clamp those that extend beyond.
+  local clipped_spans = {}
+  local max_byte = #text
+  for _, span in ipairs(spans) do
+    local hl_group, start_col, end_col = span[1], span[2], span[3]
+    if start_col < max_byte then
+      -- Span starts within bounds; clamp its end to not exceed text
+      end_col = math.min(end_col, max_byte)
+      table.insert(clipped_spans, { hl_group, start_col, end_col })
+    end
   end
 
-  return text, spans
+  return text, clipped_spans
 end
 
 -- Phase 1 renderer: ancestors as one indented tree, descendants as another.
