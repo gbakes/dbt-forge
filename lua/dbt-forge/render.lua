@@ -76,66 +76,53 @@ function M.format(graph, row, width)
     table.insert(spans, { hl_for(node, row.is_root), col, col + #glyph })
     col = col + #glyph + 1
 
-    -- TRUNCATION PRIORITY:
-    -- 1. Never truncate gutter or glyph (done above)
-    -- 2. The name is the primary identifying content: it must survive with
-    --    a meaningful number of characters, even at the cost of the tag.
-    -- 3. Drop the tag entirely rather than let it squeeze the name down to
-    --    a bare ellipsis (or a couple of unreadable characters).
-    -- 4. Only raw chop if glyph alone doesn't fit.
-
+    -- TRUNCATION PRIORITY — never truncate the name to make room for the
+    -- tag. The tag is decoration; the name is what identifies the row. The
+    -- tag appears only when the COMPLETE name and the COMPLETE tag both
+    -- fit; otherwise it is dropped entirely (never partially). This is
+    -- monotonic by construction: as width grows, the number of name
+    -- characters shown never decreases, because the name's own branch
+    -- (truncated vs. full) depends only on whether the full name fits in
+    -- the space after the glyph — not on whether the tag also fits.
     local used_prefix = utf8_len(gutter) + utf8_len(glyph) + 1  -- gutter + glyph + space
+    local available = width - used_prefix  -- space after the glyph, for name (+ tag)
     local tag_len = utf8_len(tag)
-
-    -- Space for name and tag, accounting for spaces between them
-    local space_for_name_and_tag = width - used_prefix
-
-    -- Minimum characters (including a trailing ellipsis) the name must be
-    -- able to keep for the tag to be worth showing alongside it. Below
-    -- this, a truncated name reads as noise ("…") while the tag steals all
-    -- the room — the reader loses the one thing the row exists to convey.
-    -- 4 = 3 real characters + "…": enough to recognize a common prefix
-    -- (e.g. "ord…" for "orders") without being so generous that the tag
-    -- gets dropped when it would still comfortably fit.
-    local MIN_NAME_BUDGET = 4
 
     local name = node.name
     local name_len = utf8_len(name)
     local include_tag = false
 
-    if space_for_name_and_tag > 0 then
-      -- Budget the name would get if the tag is also shown.
-      local name_budget_with_tag = space_for_name_and_tag - tag_len - 1
-
-      if name_budget_with_tag >= name_len then
-        -- Both fit with no truncation at all.
-        include_tag = true
-      elseif name_budget_with_tag >= MIN_NAME_BUDGET then
-        -- Tag fits and the name still keeps a meaningful length.
-        name = utf8_sub(name, name_budget_with_tag - 1) .. "…"
-        include_tag = true
-      else
-        -- Keeping the tag would leave too little of the name: drop the
-        -- tag and hand all remaining space to the name instead.
-        if name_len > space_for_name_and_tag then
-          name = utf8_sub(name, space_for_name_and_tag - 1) .. "…"
-        end
-        include_tag = false
-      end
+    if name_len + 1 + tag_len <= available then
+      -- Full name AND full tag both fit.
+      include_tag = true
+    elseif name_len <= available then
+      -- Full name fits, but not alongside the tag: drop the tag, never
+      -- the name.
+      include_tag = false
     else
-      -- No space for name; degenerate case (glyph alone may not fit)
-      name = ""
+      -- Even the full name alone doesn't fit: truncate the name (with
+      -- ellipsis) and drop the tag — a truncated tag is never shown.
+      name = utf8_sub(name, available - 1) .. "…"
       include_tag = false
     end
 
     table.insert(spans, { hl_for(node, row.is_root), col, col + #name })
 
-    -- Build text with deliberate truncation
-    text = gutter .. glyph .. " " .. name
+    local name_part = gutter .. glyph .. " " .. name
     if include_tag then
-      text = text .. " " .. tag
-      -- Span for tag only if included
-      table.insert(spans, { "DbtForgeLineageMaterialization", #(gutter .. glyph .. " " .. name .. " "), #(gutter .. glyph .. " " .. name .. " " .. tag) })
+      -- Right-align the tag at the requested width so materialization
+      -- tags form a scannable column across sibling rows. Safe here: the
+      -- both-fit branch above guarantees
+      -- width - utf8_len(name_part) - tag_len >= 1.
+      local pad = width - utf8_len(name_part) - tag_len
+      if pad < 1 then
+        pad = 1
+      end
+      text = name_part .. string.rep(" ", pad) .. tag
+      local tag_col = #name_part + pad
+      table.insert(spans, { "DbtForgeLineageMaterialization", tag_col, tag_col + #tag })
+    else
+      text = name_part
     end
   end
 

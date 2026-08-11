@@ -293,4 +293,75 @@ describe("render.format", function()
       end
     end
   end)
+
+  it("visible name length is monotonically non-decreasing as width grows", function()
+    -- The bug class this closes: a hard cutover on "does the tag fit" makes
+    -- the displayed name SHRINK as width GROWS past the point the tag
+    -- starts fitting (name truncated to squeeze the tag in). The rule must
+    -- guarantee the number of name characters shown never regresses as
+    -- width increases, for any name/tag/gutter combination — not just the
+    -- specific widths that were reported broken.
+    local rows = {
+      { name = "orders", materialized = "incremental", gutter = "│  │  │  │  ├─ " },
+      { name = "fct_customer_orders", materialized = "view", gutter = "│  │  ├─ " },
+      { name = "stg_payments", materialized = "view", gutter = "├─ " },
+      { name = "int_payments_pivoted_wide_example", materialized = "ephemeral", gutter = "" },
+    }
+
+    for _, spec in ipairs(rows) do
+      local g = { nodes = { x = {
+        name = spec.name, resource_type = "model", materialized = spec.materialized, path = "x.sql",
+      } } }
+      local prefix = spec.gutter .. "●" .. " "
+      local prev_visible = -1
+
+      for width = 1, 100 do
+        local text = render.format(g, { kind = "node", id = "x", gutter = spec.gutter, is_root = false }, width)
+
+        -- Longest byte-prefix of the name that appears intact right after
+        -- the (never-truncated) gutter + glyph + space. Names in this test
+        -- are plain ASCII so byte comparison is character-accurate.
+        local visible = 0
+        if text:sub(1, #prefix) == prefix then
+          local rest = text:sub(#prefix + 1)
+          for i = 1, #spec.name do
+            if rest:sub(i, i) == spec.name:sub(i, i) then
+              visible = visible + 1
+            else
+              break
+            end
+          end
+        end
+
+        assert.is_true(visible >= prev_visible, string.format(
+          "name=%s width=%d: visible name chars dropped from %d to %d (text=%q)",
+          spec.name, width, prev_visible, visible, text))
+        prev_visible = visible
+      end
+    end
+  end)
+
+  it("a shown tag never implies a truncated name", function()
+    local rows = {
+      { name = "orders", materialized = "incremental", gutter = "│  │  │  │  ├─ " },
+      { name = "fct_customer_orders", materialized = "view", gutter = "│  │  ├─ " },
+      { name = "stg_payments", materialized = "view", gutter = "├─ " },
+    }
+
+    for _, spec in ipairs(rows) do
+      local g = { nodes = { x = {
+        name = spec.name, resource_type = "model", materialized = spec.materialized, path = "x.sql",
+      } } }
+
+      for width = 1, 100 do
+        local text = render.format(g, { kind = "node", id = "x", gutter = spec.gutter, is_root = false }, width)
+        if text:find(spec.materialized, 1, true) then
+          assert.is_truthy(text:find(spec.name, 1, true), string.format(
+            "name=%s width=%d: tag shown but full name absent (text=%q)", spec.name, width, text))
+          assert.is_falsy(text:find("…", 1, true), string.format(
+            "name=%s width=%d: tag shown alongside a truncated (ellipsis) name (text=%q)", spec.name, width, text))
+        end
+      end
+    end
+  end)
 end)
