@@ -215,4 +215,68 @@ describe("render.format", function()
       end
     end
   end)
+
+  it("truncation priority: name preserved over tag", function()
+    local utf8_len = function(s)
+      local _, count = s:gsub("[^\128-\191]", "")
+      return count
+    end
+    local g = { nodes = { x = {
+      name = "orders", resource_type = "model", materialized = "incremental", path = "x.sql"
+    } } }
+    -- At width 20 with deep gutter, name should survive and tag should not appear
+    local gutter = "│  │  │  ├─ "  -- 12 chars
+    local text = render.format(g, { kind="node", id="x", gutter=gutter, is_root=false }, 20)
+    -- Text should include the name "orders" and NOT include the tag "incremental"
+    assert.is_truthy(text:find("orders", 1, true), "name missing in truncated output")
+    assert.is_falsy(text:find("incremental", 1, true), "tag should be dropped, name should survive")
+  end)
+
+  it("width invariant holds for all row kinds (nodes, headers, connectors)", function()
+    local utf8_len = function(s)
+      local _, count = s:gsub("[^\128-\191]", "")
+      return count
+    end
+    local g = { nodes = { x = {
+      name = "model_name", resource_type = "model", materialized = "table", path = "x.sql"
+    } } }
+
+    -- Test widths and row kinds
+    local widths = { 5, 8, 12, 20, 30, 48, 80 }
+
+    for _, width in ipairs(widths) do
+      -- Node rows
+      local text_node, spans_node = render.format(g, {
+        kind = "node", id = "x", gutter = "│  │  ├─ ", is_root = false
+      }, width)
+      assert.is_true(utf8_len(text_node) <= width,
+        "node row overflow at w=" .. width .. ": " .. utf8_len(text_node) .. " chars")
+      for _, span in ipairs(spans_node) do
+        assert.is_true(span[3] <= #text_node,
+          "node span end=" .. span[3] .. " > text=" .. #text_node)
+      end
+
+      -- Header rows
+      local text_header, spans_header = render.format(g, {
+        kind = "header", text = "▲ UPSTREAM MODELS WITH LONG NAME THAT EXCEEDS BOUNDS"
+      }, width)
+      assert.is_true(utf8_len(text_header) <= width,
+        "header row overflow at w=" .. width .. ": " .. utf8_len(text_header) .. " chars")
+      for _, span in ipairs(spans_header) do
+        assert.is_true(span[3] <= #text_header,
+          "header span end=" .. span[3] .. " > text=" .. #text_header)
+      end
+
+      -- Connector rows (used by rail renderer in Task 12)
+      local text_connector, spans_connector = render.format(g, {
+        kind = "connector", gutter = string.rep("│  ", 20)  -- Very wide gutter
+      }, width)
+      assert.is_true(utf8_len(text_connector) <= width,
+        "connector row overflow at w=" .. width .. ": " .. utf8_len(text_connector) .. " chars")
+      for _, span in ipairs(spans_connector) do
+        assert.is_true(span[3] <= #text_connector,
+          "connector span end=" .. span[3] .. " > text=" .. #text_connector)
+      end
+    end
+  end)
 end)

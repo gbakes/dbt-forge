@@ -46,67 +46,92 @@ end
 -- Returns the line text plus highlight spans as { hl_group, start_col, end_col }
 -- with 0-indexed byte columns and an exclusive end, matching nvim extmarks.
 function M.format(graph, row, width)
+  local text, spans
+
   if row.kind == "blank" then
-    return "", {}
+    text, spans = "", {}
+  elseif row.kind == "header" then
+    text = row.text
+    spans = { { "DbtForgeLineageHeader", 0, #row.text } }
+  elseif row.kind == "connector" then
+    text = row.gutter
+    spans = { { "DbtForgeLineageRail", 0, #row.gutter } }
+  else
+    -- kind == "node" with explicit truncation priority
+    local node = graph.nodes[row.id]
+    local gutter = row.gutter or ""
+    local glyph = row.is_root and ROOT_GLYPH or NODE_GLYPH
+    local tag = node.materialized
+
+    spans = {}
+    local col = 0
+
+    -- Gutter is always included (structure, never truncated)
+    if #gutter > 0 then
+      table.insert(spans, { "DbtForgeLineageRail", 0, #gutter })
+      col = #gutter
+    end
+
+    -- Glyph is always included (structure, never truncated)
+    table.insert(spans, { hl_for(node, row.is_root), col, col + #glyph })
+    col = col + #glyph + 1
+
+    -- TRUNCATION PRIORITY:
+    -- 1. Never truncate gutter or glyph (done above)
+    -- 2. Keep name if space allows (at least 1 char + ellipsis)
+    -- 3. Drop tag entirely before eating the name
+    -- 4. Only raw chop if glyph alone doesn't fit
+
+    local used_prefix = utf8_len(gutter) + utf8_len(glyph) + 1  -- gutter + glyph + space
+    local tag_len = utf8_len(tag)
+
+    -- Space for name and tag, accounting for spaces between them
+    local space_for_name_and_tag = width - used_prefix
+
+    local name = node.name
+    local include_tag = false
+
+    if space_for_name_and_tag > 0 then
+      -- We have space for at least something
+      if space_for_name_and_tag >= tag_len + 1 then
+        -- Enough space for tag + space before it; also fit name if possible
+        local name_budget = space_for_name_and_tag - tag_len - 1
+        if utf8_len(name) > name_budget then
+          name = utf8_sub(name, name_budget - 1) .. "…"
+        end
+        include_tag = true
+      else
+        -- Not enough for tag; use all space for name (priority: name > tag)
+        if utf8_len(name) > space_for_name_and_tag then
+          name = utf8_sub(name, space_for_name_and_tag - 1) .. "…"
+        end
+        include_tag = false
+      end
+    else
+      -- No space for name; degenerate case (glyph alone may not fit)
+      name = ""
+      include_tag = false
+    end
+
+    table.insert(spans, { hl_for(node, row.is_root), col, col + #name })
+
+    -- Build text with deliberate truncation
+    text = gutter .. glyph .. " " .. name
+    if include_tag then
+      text = text .. " " .. tag
+      -- Span for tag only if included
+      table.insert(spans, { "DbtForgeLineageMaterialization", #(gutter .. glyph .. " " .. name .. " "), #(gutter .. glyph .. " " .. name .. " " .. tag) })
+    end
   end
-  if row.kind == "header" then
-    return row.text, { { "DbtForgeLineageHeader", 0, #row.text } }
-  end
-  if row.kind == "connector" then
-    return row.gutter, { { "DbtForgeLineageRail", 0, #row.gutter } }
-  end
-
-  local node = graph.nodes[row.id]
-  local gutter = row.gutter or ""
-  local glyph = row.is_root and ROOT_GLYPH or NODE_GLYPH
-
-  local spans = {}
-  local col = 0
-  if #gutter > 0 then
-    table.insert(spans, { "DbtForgeLineageRail", 0, #gutter })
-    col = #gutter
-  end
-
-  table.insert(spans, { hl_for(node, row.is_root), col, col + #glyph })
-  col = col + #glyph + 1
-
-  -- Calculate space for name. Width must be guaranteed to never be exceeded.
-  local tag = node.materialized
-  local used_prefix = utf8_len(gutter) + utf8_len(glyph) + 1  -- gutter + glyph + space
-  local tag_len = utf8_len(tag)
-
-  -- Space available for name and padding: width - prefix - tag - (space before tag)
-  -- But don't allocate negative space; if we're already over, name gets 0.
-  local space_for_middle = math.max(0, width - used_prefix - tag_len - 1)
-
-  local name = node.name
-  if space_for_middle > 0 and utf8_len(name) > space_for_middle then
-    name = utf8_sub(name, space_for_middle - 1) .. "…"
-  elseif space_for_middle <= 0 then
-    name = ""
-  end
-
-  table.insert(spans, { hl_for(node, row.is_root), col, col + #name })
-
-  local text = gutter .. glyph .. " " .. name
-  local pad = width - utf8_len(text) - tag_len
-  if pad < 0 then
-    pad = 0
-  end
-  local tag_col = #text + pad
-  text = text .. string.rep(" ", pad) .. tag
 
   -- FINAL INVARIANT: Ensure text never exceeds width (character count)
+  -- This applies to ALL row kinds, not just nodes. If somehow text is over, truncate.
   if utf8_len(text) > width then
     text = utf8_sub(text, width)
   end
 
-  -- Add materialization tag highlight
-  table.insert(spans, { "DbtForgeLineageMaterialization", tag_col, tag_col + #tag })
-
   -- Clip all spans to final text bounds: ensure 0 <= start_col <= end_col <= #text
-  -- After truncation, some spans may point past the end. Drop those that start outside,
-  -- and clamp those that extend beyond.
+  -- This applies to ALL row kinds. After truncation, spans must be valid.
   local clipped_spans = {}
   local max_byte = #text
   for _, span in ipairs(spans) do
