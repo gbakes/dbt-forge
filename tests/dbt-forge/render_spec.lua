@@ -232,6 +232,20 @@ describe("render.format", function()
     assert.is_falsy(text:find("incremental", 1, true), "tag should be dropped, name should survive")
   end)
 
+  it("truncation priority holds at mid widths too, not just narrow ones", function()
+    local g = { nodes = { x = {
+      name = "orders", resource_type = "model", materialized = "incremental", path = "x.sql"
+    } } }
+    -- Reported regression: at width 30 with this gutter, the name collapsed
+    -- to a bare "…" while the full tag "incremental" survived intact. The
+    -- name must remain the primary identifying content at every width, not
+    -- only at the narrowest ones.
+    local gutter = "│  │  │  │  ├─ "  -- 15 chars
+    local text = render.format(g, { kind = "node", id = "x", gutter = gutter, is_root = false }, 30)
+    assert.is_truthy(text:find("orders", 1, true), "name missing at mid width")
+    assert.is_falsy(text:find("incremental", 1, true), "tag should be dropped when it would crush the name")
+  end)
+
   it("width invariant holds for all row kinds (nodes, headers, connectors)", function()
     local utf8_len = function(s)
       local _, count = s:gsub("[^\128-\191]", "")

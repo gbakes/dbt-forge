@@ -78,9 +78,11 @@ function M.format(graph, row, width)
 
     -- TRUNCATION PRIORITY:
     -- 1. Never truncate gutter or glyph (done above)
-    -- 2. Keep name if space allows (at least 1 char + ellipsis)
-    -- 3. Drop tag entirely before eating the name
-    -- 4. Only raw chop if glyph alone doesn't fit
+    -- 2. The name is the primary identifying content: it must survive with
+    --    a meaningful number of characters, even at the cost of the tag.
+    -- 3. Drop the tag entirely rather than let it squeeze the name down to
+    --    a bare ellipsis (or a couple of unreadable characters).
+    -- 4. Only raw chop if glyph alone doesn't fit.
 
     local used_prefix = utf8_len(gutter) + utf8_len(glyph) + 1  -- gutter + glyph + space
     local tag_len = utf8_len(tag)
@@ -88,21 +90,34 @@ function M.format(graph, row, width)
     -- Space for name and tag, accounting for spaces between them
     local space_for_name_and_tag = width - used_prefix
 
+    -- Minimum characters (including a trailing ellipsis) the name must be
+    -- able to keep for the tag to be worth showing alongside it. Below
+    -- this, a truncated name reads as noise ("…") while the tag steals all
+    -- the room — the reader loses the one thing the row exists to convey.
+    -- 4 = 3 real characters + "…": enough to recognize a common prefix
+    -- (e.g. "ord…" for "orders") without being so generous that the tag
+    -- gets dropped when it would still comfortably fit.
+    local MIN_NAME_BUDGET = 4
+
     local name = node.name
+    local name_len = utf8_len(name)
     local include_tag = false
 
     if space_for_name_and_tag > 0 then
-      -- We have space for at least something
-      if space_for_name_and_tag >= tag_len + 1 then
-        -- Enough space for tag + space before it; also fit name if possible
-        local name_budget = space_for_name_and_tag - tag_len - 1
-        if utf8_len(name) > name_budget then
-          name = utf8_sub(name, name_budget - 1) .. "…"
-        end
+      -- Budget the name would get if the tag is also shown.
+      local name_budget_with_tag = space_for_name_and_tag - tag_len - 1
+
+      if name_budget_with_tag >= name_len then
+        -- Both fit with no truncation at all.
+        include_tag = true
+      elseif name_budget_with_tag >= MIN_NAME_BUDGET then
+        -- Tag fits and the name still keeps a meaningful length.
+        name = utf8_sub(name, name_budget_with_tag - 1) .. "…"
         include_tag = true
       else
-        -- Not enough for tag; use all space for name (priority: name > tag)
-        if utf8_len(name) > space_for_name_and_tag then
+        -- Keeping the tag would leave too little of the name: drop the
+        -- tag and hand all remaining space to the name instead.
+        if name_len > space_for_name_and_tag then
           name = utf8_sub(name, space_for_name_and_tag - 1) .. "…"
         end
         include_tag = false
