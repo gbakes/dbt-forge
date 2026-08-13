@@ -80,6 +80,11 @@ describe("config", function()
       assert.are.equal(2, config.options.lineage.down_depth)
       assert.are.equal(48, config.options.lineage.width)
     end)
+
+    it("lets the user narrow the include list to specific resource types", function()
+      config.setup({ dbt_project_path = "/test/path", lineage = { include = { "model" } } })
+      assert.are.same({ "model" }, config.options.lineage.include)
+    end)
   end)
 end)
 

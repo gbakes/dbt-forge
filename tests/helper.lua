@@ -82,14 +82,37 @@ local function deepcopy(v)
   return out
 end
 
+-- Check if a table is list-like (keys are exactly 1..n, empty is a list).
+local function is_list(t)
+  if type(t) ~= "table" then
+    return false
+  end
+  local count = 0
+  for k, _ in pairs(t) do
+    if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+      return false
+    end
+    count = count + 1
+  end
+  -- Empty table and consecutive 1..n both count as list-like
+  for i = 1, count do
+    if t[i] == nil then
+      return false
+    end
+  end
+  return true
+end
+
 -- Deep-copies on assignment. A shallow version would alias nested tables
 -- from config.defaults into config.options, so the second setup() call in a
 -- test run would see the first call's values.
+-- Matches Neovim's semantics: recurse into map-like tables, replace list-like tables wholesale.
 vim.tbl_deep_extend = vim.tbl_deep_extend or function(_, ...)
   local out = {}
   local function merge(dst, src)
     for k, v in pairs(src) do
-      if type(v) == "table" and type(dst[k]) == "table" then
+      -- Only recurse into map-like tables; replace list-like tables wholesale
+      if type(v) == "table" and type(dst[k]) == "table" and not is_list(v) and not is_list(dst[k]) then
         merge(dst[k], v)
       else
         dst[k] = deepcopy(v)
