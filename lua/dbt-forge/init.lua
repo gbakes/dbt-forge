@@ -32,6 +32,14 @@ function M.setup(opts)
     })
   end
 
+  if config.options.keymaps.lineage then
+    vim.keymap.set("n", config.options.keymaps.lineage, M.show_lineage, {
+      desc = "Show dbt model lineage",
+      noremap = true,
+      silent = true,
+    })
+  end
+
   if config.options.keymaps.goto_definition then
     vim.api.nvim_create_autocmd("FileType", {
       pattern = "sql",
@@ -142,6 +150,39 @@ function M.test_model()
   ))
 
   ui.run_in_split(cmd)
+end
+
+function M.show_lineage()
+  local utils_mod = require("dbt-forge.utils")
+  if not utils_mod.is_sql_file() then
+    vim.notify("Not a SQL file", vim.log.levels.WARN)
+    return
+  end
+
+  local manifest = require("dbt-forge.manifest")
+  local graph, err = manifest.load(
+    config.options.dbt_project_path,
+    config.options.lineage.include
+  )
+  if not graph then
+    vim.notify("dbt-forge: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  local name = vim.fn.expand("%:t:r")
+  local rel_path = vim.fn.expand("%:p"):gsub(
+    "^" .. vim.pesc(config.options.dbt_project_path) .. "/", ""
+  )
+  local node_id = manifest.resolve(graph, name, rel_path)
+  if not node_id then
+    vim.notify(
+      string.format("dbt-forge: %s not in manifest — run dbt parse", name),
+      vim.log.levels.WARN
+    )
+    return
+  end
+
+  require("dbt-forge.lineage_view").open(node_id)
 end
 
 M.goto_definition = goto_def.goto_definition

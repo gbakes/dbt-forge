@@ -124,7 +124,7 @@ local function resolve_ref(model_name)
   return nil
 end
 
-local function resolve_source(namespace, table_name)
+function M.resolve_source(namespace, table_name)
   local project_path = config.options.dbt_project_path
   if not project_path then return nil end
 
@@ -328,7 +328,7 @@ function M.goto_definition()
     result = resolve_ref(ref.model)
     label = ref.model
   elseif ref.type == "source" then
-    result = resolve_source(ref.namespace, ref.table_name)
+    result = M.resolve_source(ref.namespace, ref.table_name)
     label = ref.namespace .. "." .. ref.table_name
   elseif ref.type == "package_macro" then
     result = resolve_macro(ref.macro, ref.package)
@@ -355,7 +355,7 @@ end
 -- Exposed for testing
 M._parse_reference_at_cursor = parse_reference_at_cursor
 M._resolve_ref = resolve_ref
-M._resolve_source = resolve_source
+M._resolve_source = M.resolve_source
 M._resolve_macro = resolve_macro
 M._resolve_word = resolve_word
 
