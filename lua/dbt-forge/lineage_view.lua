@@ -28,7 +28,11 @@ local function ensure_highlights()
   })
 end
 
--- Sidebar state. `win`/`buf` are nil when closed.
+-- Sidebar state. `win`/`buf` are nil when closed. `up`/`down` deliberately
+-- survive `close()` (they are only reset to the configured defaults the
+-- first time `open()` ever runs) so re-opening the sidebar restores whatever
+-- depth the user last dialed in with +/- rather than snapping back to the
+-- config defaults — this is intentional, not a missed reset.
 local state = {
   win = nil,
   buf = nil,
@@ -38,8 +42,48 @@ local state = {
   line_to_node = {},
 }
 
+local function reset_state()
+  state.win, state.buf = nil, nil
+  state.line_to_node = {}
+end
+
+-- `win` alone can be a stale signal: `:bd` on the sidebar buffer leaves the
+-- window in place (Neovim swaps in a fresh scratch buffer) but wipes our
+-- buffer out from under us, so `state.buf` becomes a dangling handle. Treat
+-- the sidebar as open only when the window is still showing the buffer we
+-- created.
 function M.is_open()
-  return state.win ~= nil and vim.api.nvim_win_is_valid(state.win)
+  return state.win ~= nil
+    and vim.api.nvim_win_is_valid(state.win)
+    and state.buf ~= nil
+    and vim.api.nvim_buf_is_valid(state.buf)
+    and vim.api.nvim_win_get_buf(state.win) == state.buf
+end
+
+-- Belt-and-suspenders: proactively clear state the moment the sidebar's
+-- window or buffer disappears by any means (`:bd`, `:close`, `<C-w>c`, ...),
+-- so a stale handle can never survive into a later `rerender()`. `is_open()`
+-- above is already correct without this, but this keeps `state` honest
+-- immediately rather than only on the next check.
+local function watch_for_staleness(win, buf)
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern = tostring(win),
+    once = true,
+    callback = function()
+      if state.win == win then
+        reset_state()
+      end
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      if state.buf == buf then
+        reset_state()
+      end
+    end,
+  })
 end
 
 local function age_label(mtime)
@@ -133,17 +177,47 @@ local function node_under_cursor()
   return state.line_to_node[lnum]
 end
 
+-- Finds the window files should open into: the sidebar's "previous" window.
+-- If the sidebar is the only window in the tabpage (`<C-w>o` from inside it,
+-- or every other split got closed), `wincmd p` has no previous window to
+-- return to and raises an error — and even when it doesn't error, it can
+-- leave us right back on the sidebar itself. Either way, never edit a file
+-- into the sidebar buffer: fall back to opening a fresh split to its right.
+local function target_window()
+  local ok = pcall(vim.cmd, "wincmd p")
+  local win = vim.api.nvim_get_current_win()
+  if ok and win ~= state.win then
+    return win
+  end
+  vim.cmd("belowright vsplit")
+  return vim.api.nvim_get_current_win()
+end
+
+-- Opens `path` (optionally at `line`) in the editing window, then restores
+-- focus to the sidebar when `keep_focus` is set.
+local function open_in_previous(path, line, keep_focus)
+  vim.api.nvim_set_current_win(target_window())
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  if line then
+    vim.api.nvim_win_set_cursor(0, { line, 0 })
+  end
+  if keep_focus then
+    vim.api.nvim_set_current_win(state.win)
+  end
+end
+
 local function open_node(keep_focus)
   local node_id = node_under_cursor()
   if not node_id then
     return
   end
 
-  local graph = manifest.load(
+  local graph, err = manifest.load(
     config.options.dbt_project_path,
     config.options.lineage.include
   )
   if not graph then
+    vim.notify("dbt-forge: " .. err, vim.log.levels.ERROR)
     return
   end
   local node = graph.nodes[node_id]
@@ -154,24 +228,12 @@ local function open_node(keep_focus)
     local namespace, table_name = node.name:match("^([^.]+)%.(.+)$")
     local ok, target = pcall(require("dbt-forge.goto").resolve_source, namespace, table_name)
     if ok and target then
-      vim.cmd("wincmd p")
-      vim.cmd("edit " .. vim.fn.fnameescape(target.file))
-      if target.line then
-        vim.api.nvim_win_set_cursor(0, { target.line, 0 })
-      end
-      if keep_focus then
-        vim.api.nvim_set_current_win(state.win)
-      end
+      open_in_previous(target.file, target.line, keep_focus)
       return
     end
   end
 
-  local path = config.options.dbt_project_path .. "/" .. node.path
-  vim.cmd("wincmd p")
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
-  if keep_focus then
-    vim.api.nvim_set_current_win(state.win)
-  end
+  open_in_previous(config.options.dbt_project_path .. "/" .. node.path, nil, keep_focus)
 end
 
 local function set_depth(delta)
@@ -228,8 +290,7 @@ function M.close()
   if state.win and vim.api.nvim_win_is_valid(state.win) then
     vim.api.nvim_win_close(state.win, true)
   end
-  state.win, state.buf = nil, nil
-  state.line_to_node = {}
+  reset_state()
 end
 
 -- Re-roots an already-open sidebar without stealing focus. Used by follow.
@@ -261,6 +322,7 @@ function M.open(root_id)
 
   state.buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_win_set_buf(state.win, state.buf)
+  watch_for_staleness(state.win, state.buf)
 
   vim.api.nvim_buf_set_option(state.buf, "buftype", "nofile")
   vim.api.nvim_buf_set_option(state.buf, "bufhidden", "wipe")
