@@ -189,7 +189,17 @@ local function target_window()
   if ok and win ~= state.win then
     return win
   end
+  -- Fallback: `vsplit` runs with the sidebar itself as the current window,
+  -- so it halves the SIDEBAR's own column rather than carving a window out
+  -- of already-more-than-48-columns of free space — `winfixwidth` guards
+  -- against other windows' resizing, not against a literal split of the
+  -- fixed window itself. Restore the sidebar to its configured width now
+  -- that the new editing window exists, before anything else can read or
+  -- rely on it.
   vim.cmd("belowright vsplit")
+  if state.win and vim.api.nvim_win_is_valid(state.win) then
+    vim.api.nvim_win_set_width(state.win, config.options.lineage.width)
+  end
   return vim.api.nvim_get_current_win()
 end
 
