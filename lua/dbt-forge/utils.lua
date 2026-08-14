@@ -144,6 +144,25 @@ function M.detect_python_env()
   return "none", nil
 end
 
+-- Expresses `abs_path` relative to `project_path`, with the leading path
+-- separator stripped (e.g. "/p/proj" + "/p/proj/models/x.sql" ->
+-- "models/x.sql"). Returns nil when `abs_path` is not inside `project_path`
+-- at all, so callers can tell "outside the project" apart from "already
+-- relative" rather than silently falling back to the absolute path.
+--
+-- Trailing slashes on `project_path` are stripped before building the match
+-- pattern: without that, a configured path of "/p/proj/" turns the pattern
+-- into "^/p/proj//" (double slash), which never matches "/p/proj/models/..."
+-- and would otherwise leave `rel_path` absolute with no error.
+function M.rel_path(project_path, abs_path)
+  local trimmed = (project_path or ""):gsub("/+$", "")
+  local rel, count = abs_path:gsub("^" .. vim.pesc(trimmed) .. "/", "", 1)
+  if count == 0 then
+    return nil
+  end
+  return rel
+end
+
 function M.get_project_config()
   local dbt_path = M.find_dbt_project_path()
   local env_manager, env_name = M.detect_python_env()

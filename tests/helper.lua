@@ -103,15 +103,15 @@ local function is_list(t)
   return true
 end
 
--- Deep-copies on assignment. A shallow version would alias nested tables
--- from config.defaults into config.options, so the second setup() call in a
--- test run would see the first call's values.
--- Matches Neovim's semantics: recurse into map-like tables, replace list-like tables wholesale.
 -- Matches Neovim's real vim.pesc: escape Lua pattern magic characters.
 vim.pesc = vim.pesc or function(s)
   return (s:gsub("[%%%^%$%(%)%.%[%]%*%+%-%?]", "%%%1"))
 end
 
+-- Deep-copies on assignment. A shallow version would alias nested tables
+-- from config.defaults into config.options, so the second setup() call in a
+-- test run would see the first call's values.
+-- Matches Neovim's semantics: recurse into map-like tables, replace list-like tables wholesale.
 vim.tbl_deep_extend = vim.tbl_deep_extend or function(_, ...)
   local out = {}
   local function merge(dst, src)

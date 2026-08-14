@@ -203,11 +203,37 @@ local function target_window()
   return vim.api.nvim_get_current_win()
 end
 
+-- One-shot flag consumed by follow (dbt-forge._follow_current_buffer). A
+-- keep-focus open (`o`) sets it immediately before its own `:edit`, so the
+-- BufEnter that `:edit` fires synchronously can be told apart from a real
+-- navigation and skip re-rooting the sidebar — re-rooting on every peek
+-- would collapse `o` and `<CR>` into the same behaviour bar focus, and
+-- would make peeking at two sibling nodes in turn impossible (the first
+-- peek's target would no longer be on screen once the sidebar re-rooted).
+-- Cleared unconditionally right after `:edit` returns, not deferred: if
+-- BufEnter fired, follow already consumed it above; if it never fired (the
+-- target was not a `.sql` pattern match, or was already the current
+-- buffer), leaving it set would wrongly swallow the user's next genuine
+-- buffer switch.
+local suppress_follow = false
+
+-- Consumes (reads, then clears) the suppression flag. Follow calls this as
+-- the very first thing it does on every BufEnter.
+function M.consume_follow_suppression()
+  local was = suppress_follow
+  suppress_follow = false
+  return was
+end
+
 -- Opens `path` (optionally at `line`) in the editing window, then restores
 -- focus to the sidebar when `keep_focus` is set.
 local function open_in_previous(path, line, keep_focus)
   vim.api.nvim_set_current_win(target_window())
+  if keep_focus then
+    suppress_follow = true
+  end
   vim.cmd("edit " .. vim.fn.fnameescape(path))
+  suppress_follow = false
   if line then
     vim.api.nvim_win_set_cursor(0, { line, 0 })
   end

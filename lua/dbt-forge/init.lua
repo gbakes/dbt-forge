@@ -184,10 +184,11 @@ function M.show_lineage()
   end
 
   local name = vim.fn.expand("%:t:r")
-  local rel_path = vim.fn.expand("%:p"):gsub(
-    "^" .. vim.pesc(config.options.dbt_project_path) .. "/", ""
-  )
-  local node_id = manifest.resolve(graph, name, rel_path)
+  local rel_path = utils_mod.rel_path(config.options.dbt_project_path, vim.fn.expand("%:p"))
+  -- `rel_path` is nil when the buffer lives outside the project entirely;
+  -- short-circuit straight to the same "not in manifest" warning rather
+  -- than calling resolve with a nil path.
+  local node_id = rel_path and manifest.resolve(graph, name, rel_path)
   if not node_id then
     vim.notify(
       string.format("dbt-forge: %s not in manifest — run dbt parse", name),
@@ -203,10 +204,20 @@ M.goto_definition = goto_def.goto_definition
 
 -- Re-roots the already-open lineage sidebar on whatever model buffer the
 -- user just switched to. Never interrupts: a closed sidebar, a missing/
--- unreadable manifest, or a buffer that is not a known model are all
--- silently ignored — following should only track, never notify or error.
+-- unreadable manifest, a buffer outside the project, or a buffer that is
+-- not a known model are all silently ignored — following should only
+-- track, never notify or error.
 function M._follow_current_buffer()
   local view = require("dbt-forge.lineage_view")
+  -- Checked first, unconditionally: a keep-focus peek (`o` in the sidebar)
+  -- sets this immediately before its own `:edit`, so the BufEnter that
+  -- `:edit` fires synchronously must not re-root the sidebar onto the
+  -- peeked node — that would defeat the entire point of keeping focus.
+  -- Consuming it here (read-and-clear) even when the sidebar turns out to
+  -- be closed keeps it from leaking into a later, unrelated BufEnter.
+  if view.consume_follow_suppression() then
+    return
+  end
   if not view.is_open() then
     return
   end
@@ -220,9 +231,11 @@ function M._follow_current_buffer()
     return
   end
 
-  local rel_path = vim.fn.expand("%:p"):gsub(
-    "^" .. vim.pesc(config.options.dbt_project_path) .. "/", ""
-  )
+  local rel_path = utils.rel_path(config.options.dbt_project_path, vim.fn.expand("%:p"))
+  if not rel_path then
+    return
+  end
+
   local node_id = manifest.resolve(graph, vim.fn.expand("%:t:r"), rel_path)
   if node_id then
     view.refocus(node_id)
