@@ -53,6 +53,20 @@ function M.setup(opts)
       end,
     })
   end
+
+  if config.options.lineage.follow then
+    -- `clear = true` guards against double-registration: a second setup()
+    -- call would otherwise stack a second autocmd, and since this one calls
+    -- refocus() (unlike the FileType autocmd above, which is idempotent),
+    -- that means a redundant manifest load and rerender on every buffer
+    -- switch rather than just tidiness.
+    local augroup = vim.api.nvim_create_augroup("DbtForgeLineageFollow", { clear = true })
+    vim.api.nvim_create_autocmd("BufEnter", {
+      group = augroup,
+      pattern = "*.sql",
+      callback = M._follow_current_buffer,
+    })
+  end
 end
 
 function M.run_model()
@@ -186,5 +200,33 @@ function M.show_lineage()
 end
 
 M.goto_definition = goto_def.goto_definition
+
+-- Re-roots the already-open lineage sidebar on whatever model buffer the
+-- user just switched to. Never interrupts: a closed sidebar, a missing/
+-- unreadable manifest, or a buffer that is not a known model are all
+-- silently ignored — following should only track, never notify or error.
+function M._follow_current_buffer()
+  local view = require("dbt-forge.lineage_view")
+  if not view.is_open() then
+    return
+  end
+
+  local manifest = require("dbt-forge.manifest")
+  local graph = manifest.load(
+    config.options.dbt_project_path,
+    config.options.lineage.include
+  )
+  if not graph then
+    return
+  end
+
+  local rel_path = vim.fn.expand("%:p"):gsub(
+    "^" .. vim.pesc(config.options.dbt_project_path) .. "/", ""
+  )
+  local node_id = manifest.resolve(graph, vim.fn.expand("%:t:r"), rel_path)
+  if node_id then
+    view.refocus(node_id)
+  end
+end
 
 return M
