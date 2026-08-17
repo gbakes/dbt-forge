@@ -247,16 +247,29 @@ describe("lineage.assign_lanes", function()
     assert.are.equal(1, rows["d"].lane)
   end)
 
-  it("never gives two lanes the same target", function()
-    local rows = rows_for({ { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" } }, "a", 0, 3)
+  -- Replaces a per-row "two lanes never share a target" check, which cannot
+  -- fail: a duplicate target is transient and never lands inside a snapshot,
+  -- because a row frees its own lane before the snapshot is taken. What does
+  -- survive into the rows is a ghost lane — one left pointing at a node that
+  -- has already been emitted. The diamond needs a tail so there is a row
+  -- after the convergence for the ghost to appear on.
+  it("never leaves a lane pointing at an already-emitted node", function()
+    local rows = rows_for({
+      { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" }, { "d", "e" },
+    }, "a", 0, 4)
+    local emitted = {}
     for _, row in ipairs(rows) do
-      local seen = {}
-      for _, target in ipairs(row.lanes) do
+      for i = 1, #row.lanes do
+        local target = row.lanes[i]
         if target then
-          assert.is_nil(seen[target], "two lanes target " .. tostring(target))
-          seen[target] = true
+          assert.is_falsy(
+            emitted[target] or target == row.id,
+            string.format("row %s: lane %d still targets already-emitted %s",
+              row.id, i, tostring(target))
+          )
         end
       end
+      emitted[row.id] = true
     end
   end)
 
@@ -310,5 +323,19 @@ describe("lineage.build", function()
     for _, row in ipairs(rows) do ids[row.id] = true end
     assert.is_true(ids[FCT])
     assert.is_true(ids["model.jaffle_shop.dim_customers"])
+  end)
+
+  -- `sub` is a deliberate second return value that Task 12 consumes; assert
+  -- on its real content, not just its presence, so dropping it or swapping
+  -- in the wrong table both fail loudly here rather than in Task 12.
+  it("also returns the induced subgraph selection", function()
+    local graph = manifest.project(fixture(), ALL)
+    local rows, sub = lineage.build(graph, FCT, 2, 2)
+    assert.is_true(#rows > 0)
+    assert.is_not_nil(sub)
+    assert.are.equal(0, sub.depth[FCT])
+    assert.are.equal(-1, sub.depth["model.jaffle_shop.stg_orders"])
+    assert.is_not_nil(sub.children)
+    assert.is_not_nil(sub.parents)
   end)
 end)

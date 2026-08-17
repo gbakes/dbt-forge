@@ -156,6 +156,10 @@ function M.assign_lanes(sub, order, root_id)
       local existing = lane_targeting(lanes, child)
       if existing then
         -- Diamond: the child already has a lane from another parent.
+        -- `existing == lane` is unreachable: `lanes[lane]` was just freed
+        -- above and nothing between there and here can set it back to this
+        -- child's own id before this child's own check runs. Guard kept as
+        -- defensive, not load-bearing.
         if existing ~= lane then
           table.insert(splits, existing)
         end
