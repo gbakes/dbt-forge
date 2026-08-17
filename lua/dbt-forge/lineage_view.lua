@@ -204,17 +204,17 @@ local function target_window()
 end
 
 -- One-shot flag consumed by follow (dbt-forge._follow_current_buffer). A
--- keep-focus open (`o`) sets it immediately before its own `:edit`, so the
--- BufEnter that `:edit` fires synchronously can be told apart from a real
--- navigation and skip re-rooting the sidebar — re-rooting on every peek
--- would collapse `o` and `<CR>` into the same behaviour bar focus, and
--- would make peeking at two sibling nodes in turn impossible (the first
--- peek's target would no longer be on screen once the sidebar re-rooted).
--- Cleared unconditionally right after `:edit` returns, not deferred: if
--- BufEnter fired, follow already consumed it above; if it never fired (the
--- target was not a `.sql` pattern match, or was already the current
--- buffer), leaving it set would wrongly swallow the user's next genuine
--- buffer switch.
+-- keep-focus open (`o`) covers it across its ENTIRE open sequence, not just
+-- the `:edit`: `target_window()` below runs `wincmd p` (or the vsplit
+-- fallback), which itself fires a real BufEnter for whatever buffer that
+-- window already held — BEFORE the intended file is opened. Suppressing
+-- only around `:edit` (as an earlier version of this did) left that
+-- window-switch BufEnter unsuppressed, so a peek could follow onto the
+-- STALE buffer the editing window happened to be showing, not even the
+-- peeked node. Re-rooting on either BufEnter during a peek would also
+-- collapse `o` and `<CR>` into the same behaviour bar focus, and make
+-- peeking at two sibling nodes in turn impossible (the first peek's target
+-- would no longer be on screen once the sidebar re-rooted).
 local suppress_follow = false
 
 -- Consumes (reads, then clears) the suppression flag. Follow calls this as
@@ -225,15 +225,47 @@ function M.consume_follow_suppression()
   return was
 end
 
--- Opens `path` (optionally at `line`) in the editing window, then restores
--- focus to the sidebar when `keep_focus` is set.
-local function open_in_previous(path, line, keep_focus)
-  vim.api.nvim_set_current_win(target_window())
-  if keep_focus then
-    suppress_follow = true
-  end
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
+-- Suppresses follow across `switch_fn` (the window switch, which may itself
+-- fire a spurious BufEnter) and `edit_fn` (the real `:edit`), then restores
+-- the flag to its correct state for each. `keep_focus == true` (`o`) needs
+-- BOTH BufEnters suppressed, so the flag is re-armed right after
+-- `switch_fn` returns — the spurious BufEnter it triggered may already have
+-- consumed (and cleared) the initial `true`, and a single "consume" cannot
+-- by itself survive two separate BufEnters. `keep_focus == false` (`<CR>`)
+-- wants only the window-switch BufEnter suppressed, so the flag is
+-- explicitly disarmed before `edit_fn` runs, regardless of whether the
+-- switch happened to consume it already.
+--
+-- `edit_fn` runs under `pcall`, and the flag is cleared UNCONDITIONALLY
+-- right after — including when `edit_fn` throws (e.g. `:edit` hitting E37
+-- on a modified buffer with `nofile` `hidden`). Without the `pcall`, a
+-- thrown error unwinds straight out of this function and skips the clear
+-- entirely, leaving `suppress_follow` stuck `true` and silently swallowing
+-- every later, unrelated BufEnter until the next open. Returns the pcall's
+-- `ok, err`.
+local function with_follow_suppressed(keep_focus, switch_fn, edit_fn)
+  suppress_follow = true
+  switch_fn()
+  suppress_follow = keep_focus
+  local ok, err = pcall(edit_fn)
   suppress_follow = false
+  return ok, err
+end
+
+-- Opens `path` (optionally at `line`) in the editing window, then restores
+-- focus to the sidebar when `keep_focus` is set. Reports (rather than
+-- crashing on) a failed `:edit` — e.g. E37 on a modified buffer — so a
+-- failed peek is never silent.
+local function open_in_previous(path, line, keep_focus)
+  local ok, err = with_follow_suppressed(
+    keep_focus,
+    function() vim.api.nvim_set_current_win(target_window()) end,
+    function() vim.cmd("edit " .. vim.fn.fnameescape(path)) end
+  )
+  if not ok then
+    vim.notify("dbt-forge: could not open " .. path .. ": " .. tostring(err), vim.log.levels.ERROR)
+    return
+  end
   if line then
     vim.api.nvim_win_set_cursor(0, { line, 0 })
   end
@@ -379,5 +411,12 @@ function M.open(root_id)
   vim.api.nvim_set_current_win(previous)
   vim.api.nvim_set_current_win(state.win)
 end
+
+-- Exposed for testing. `with_follow_suppressed` takes plain callables for
+-- its window-switch/edit steps rather than calling vim.api/vim.cmd
+-- directly, so its choreography (arm before switch, re-arm-or-disarm
+-- before edit depending on keep_focus, unconditional clear afterwards even
+-- on a thrown error) is exercisable under busted without a vim.api stub.
+M._with_follow_suppressed = with_follow_suppressed
 
 return M
