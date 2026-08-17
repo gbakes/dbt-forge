@@ -290,6 +290,15 @@ describe("lineage.assign_lanes", function()
     end
     assert.are.equal(1, roots)
   end)
+
+  -- a→b, a→c, b→d. Order is a, b, c, d. `c` closes lane 2 as its LAST act
+  -- (no children), leaving lane 2 as a trailing free slot behind `d`'s lane 1
+  -- — that trailing slot must be trimmed off before `d` is emitted, or `d`
+  -- reports a phantom second rail nothing occupies.
+  it("trims a closed trailing lane instead of leaving a phantom rail", function()
+    local rows = by_id(rows_for({ { "a", "b" }, { "a", "c" }, { "b", "d" } }, "a", 0, 2))
+    assert.are.equal(1, #rows["d"].lanes)
+  end)
 end)
 
 describe("lineage.build", function()
