@@ -122,3 +122,83 @@ describe("lineage.select", function()
     end
   end)
 end)
+
+describe("lineage.topo_sort", function()
+  local function position_map(order)
+    local pos = {}
+    for i, id in ipairs(order) do pos[id] = i end
+    return pos
+  end
+
+  it("places every parent before its child", function()
+    local g = graph_from_edges({ { "a", "b" }, { "b", "d" }, { "a", "c" }, { "c", "d" } })
+    local sub = lineage.select(g, "a", 0, 3)
+    local pos = position_map(lineage.topo_sort(g, sub))
+    assert.is_true(pos["a"] < pos["b"])
+    assert.is_true(pos["a"] < pos["c"])
+    assert.is_true(pos["b"] < pos["d"])
+    assert.is_true(pos["c"] < pos["d"])
+  end)
+
+  it("emits every selected node exactly once", function()
+    local g = graph_from_edges({ { "a", "b" }, { "b", "d" }, { "a", "c" }, { "c", "d" } })
+    local sub = lineage.select(g, "a", 0, 3)
+    local order = lineage.topo_sort(g, sub)
+    assert.are.equal(4, #order)
+    local seen = {}
+    for _, id in ipairs(order) do
+      assert.is_nil(seen[id], id .. " emitted twice")
+      seen[id] = true
+    end
+  end)
+
+  -- Exact expected order, not merely "stable". The depth term is load-bearing
+  -- here: once `n` is emitted, the ready set holds `z` (depth 1) and `a`
+  -- (depth 2), and only the depth comparison keeps `z` ahead of the
+  -- alphabetically-earlier `a`.
+  it("emits nodes in a fixed order, shallowest ready node first", function()
+    local g = graph_from_edges({ { "m", "n" }, { "m", "z" }, { "n", "a" } })
+    local sub = lineage.select(g, "m", 0, 3)
+    assert.are.same({ "m", "n", "z", "a" }, lineage.topo_sort(g, sub))
+  end)
+
+  -- graph_from_edges sets name == unique_id for every node, so it cannot
+  -- express the case the `name` tie-break exists for. Hand-built: the node
+  -- whose id sorts LAST has the name that sorts FIRST, so name-ordering and
+  -- id-ordering disagree and only a comparator that consults `name` gets
+  -- this right.
+  it("breaks ties on name before unique_id", function()
+    local g = {
+      nodes = {
+        ["model.pkg.root"] = { name = "root", resource_type = "model" },
+        ["model.pkg.zebra"] = { name = "alpha", resource_type = "model" },
+        ["model.pkg.alpha"] = { name = "zebra", resource_type = "model" },
+      },
+      parents = {
+        ["model.pkg.root"] = {},
+        ["model.pkg.zebra"] = { "model.pkg.root" },
+        ["model.pkg.alpha"] = { "model.pkg.root" },
+      },
+      children = {
+        ["model.pkg.root"] = { "model.pkg.alpha", "model.pkg.zebra" },
+        ["model.pkg.zebra"] = {},
+        ["model.pkg.alpha"] = {},
+      },
+      by_name = {},
+    }
+    local sub = lineage.select(g, "model.pkg.root", 0, 1)
+    assert.are.same(
+      { "model.pkg.root", "model.pkg.zebra", "model.pkg.alpha" },
+      lineage.topo_sort(g, sub)
+    )
+  end)
+
+  it("orders upstream nodes before the root", function()
+    local graph = manifest.project(fixture(), ALL)
+    local sub = lineage.select(graph, FCT, 2, 2)
+    local pos = position_map(lineage.topo_sort(graph, sub))
+    assert.is_true(pos["source.jaffle_shop.jaffle.orders"] < pos[FCT])
+    assert.is_true(pos["model.jaffle_shop.stg_orders"] < pos[FCT])
+    assert.is_true(pos[FCT] < pos["model.jaffle_shop.dim_customers"])
+  end)
+end)

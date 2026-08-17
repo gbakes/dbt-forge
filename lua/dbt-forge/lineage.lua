@@ -54,4 +54,54 @@ function M.select(graph, root_id, up_depth, down_depth)
   return { depth = depth, parents = parents, children = children }
 end
 
+-- Kahn's algorithm. The ordering is what makes rails possible at all: with
+-- every parent emitted before its children, all edges point downward in the
+-- buffer and no rail ever has to route backwards.
+--
+-- Ties break on (depth, name, unique_id) — a total order, so output is
+-- byte-identical across runs and therefore assertable in tests.
+function M.topo_sort(graph, sub)
+  local function less(a, b)
+    if sub.depth[a] ~= sub.depth[b] then
+      return sub.depth[a] < sub.depth[b]
+    end
+    local name_a = graph.nodes[a] and graph.nodes[a].name or a
+    local name_b = graph.nodes[b] and graph.nodes[b].name or b
+    if name_a ~= name_b then
+      return name_a < name_b
+    end
+    return a < b
+  end
+
+  local indegree, ready = {}, {}
+  for id in pairs(sub.depth) do
+    indegree[id] = #sub.parents[id]
+    if indegree[id] == 0 then
+      table.insert(ready, id)
+    end
+  end
+  table.sort(ready, less)
+
+  local order = {}
+  while #ready > 0 do
+    local node = table.remove(ready, 1)
+    table.insert(order, node)
+    local unlocked = false
+    for _, child in ipairs(sub.children[node]) do
+      indegree[child] = indegree[child] - 1
+      if indegree[child] == 0 then
+        table.insert(ready, child)
+        unlocked = true
+      end
+    end
+    -- Re-sorting is O(n log n) per unlock, so worst case O(n² log n). Graphs
+    -- here are depth-capped to a few hundred nodes; this is not the bottleneck.
+    if unlocked then
+      table.sort(ready, less)
+    end
+  end
+
+  return order
+end
+
 return M
