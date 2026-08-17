@@ -202,3 +202,104 @@ describe("lineage.topo_sort", function()
     assert.is_true(pos[FCT] < pos["model.jaffle_shop.dim_customers"])
   end)
 end)
+
+describe("lineage.assign_lanes", function()
+  local function rows_for(edges, root, up, down)
+    local g = graph_from_edges(edges)
+    local sub = lineage.select(g, root, up, down)
+    return lineage.assign_lanes(sub, lineage.topo_sort(g, sub), root), g
+  end
+
+  local function by_id(rows)
+    local map = {}
+    for _, row in ipairs(rows) do map[row.id] = row end
+    return map
+  end
+
+  it("keeps a linear chain in a single lane", function()
+    local rows = rows_for({ { "a", "b" }, { "b", "c" } }, "a", 0, 3)
+    for _, row in ipairs(rows) do
+      assert.are.equal(1, row.lane)
+      assert.are.same({}, row.splits)
+    end
+  end)
+
+  it("opens a second lane for a fan-out", function()
+    local rows = by_id(rows_for({ { "a", "b" }, { "a", "c" } }, "a", 0, 2))
+    assert.are.equal(1, rows["a"].lane)
+    assert.are.same({ 2 }, rows["a"].splits)
+    assert.are.equal(1, rows["b"].lane)
+    assert.are.equal(2, rows["c"].lane)
+  end)
+
+  it("opens one lane per extra child on a wide fan-out", function()
+    local rows = by_id(rows_for({ { "a", "b" }, { "a", "c" }, { "a", "d" } }, "a", 0, 2))
+    assert.are.same({ 2, 3 }, rows["a"].splits)
+  end)
+
+  it("reuses an existing lane when a diamond reconverges", function()
+    -- a→b, a→c, b→d, c→d. Order is a, b, c, d. b opens d's lane; when c is
+    -- emitted it must connect across to that lane, not allocate a new one.
+    local rows = by_id(rows_for({ { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" } }, "a", 0, 3))
+    assert.are.equal(1, rows["b"].lane)
+    assert.are.equal(2, rows["c"].lane)
+    assert.are.same({ 1 }, rows["c"].splits)
+    assert.are.equal(1, rows["d"].lane)
+  end)
+
+  it("never gives two lanes the same target", function()
+    local rows = rows_for({ { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" } }, "a", 0, 3)
+    for _, row in ipairs(rows) do
+      local seen = {}
+      for _, target in ipairs(row.lanes) do
+        if target then
+          assert.is_nil(seen[target], "two lanes target " .. tostring(target))
+          seen[target] = true
+        end
+      end
+    end
+  end)
+
+  it("uses false rather than nil for free lanes", function()
+    local rows = rows_for({ { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" } }, "a", 0, 3)
+    for _, row in ipairs(rows) do
+      for i = 1, #row.lanes do
+        assert.is_not_nil(row.lanes[i], "lane " .. i .. " is a nil hole")
+      end
+    end
+  end)
+
+  -- A lane opened for a node stays occupied while unrelated nodes emit above
+  -- it. On a three-way fan-out the order is a, b, c, d: `a` opens lanes 2 and
+  -- 3 at once, so lane 3 is held for `d` across BOTH intervening rows. (The
+  -- obvious fixture — a long chain beside a single sibling — does not test
+  -- this, because topo_sort orders by depth first and emits the shallow
+  -- sibling before the chain ever gets deep.)
+  it("holds a lane open across intervening rows", function()
+    local rows = by_id(rows_for({ { "a", "b" }, { "a", "c" }, { "a", "d" } }, "a", 0, 2))
+    assert.are.equal("d", rows["b"].lanes[3])
+    assert.are.equal("d", rows["c"].lanes[3])
+    assert.are.equal(3, rows["d"].lane)
+  end)
+
+  it("marks exactly one row as root", function()
+    local rows = rows_for({ { "a", "b" }, { "b", "c" } }, "b", 1, 1)
+    local roots = 0
+    for _, row in ipairs(rows) do
+      if row.is_root then roots = roots + 1 end
+    end
+    assert.are.equal(1, roots)
+  end)
+end)
+
+describe("lineage.build", function()
+  it("composes selection, ordering and lane assignment", function()
+    local graph = manifest.project(fixture(), ALL)
+    local rows = lineage.build(graph, FCT, 2, 2)
+    assert.is_true(#rows > 0)
+    local ids = {}
+    for _, row in ipairs(rows) do ids[row.id] = true end
+    assert.is_true(ids[FCT])
+    assert.is_true(ids["model.jaffle_shop.dim_customers"])
+  end)
+end)

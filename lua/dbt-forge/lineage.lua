@@ -104,4 +104,95 @@ function M.topo_sort(graph, sub)
   return order
 end
 
+-- A free lane is `false`, never nil: `#t` on a table with nil holes is
+-- undefined in Lua and this algorithm indexes by #lanes throughout.
+local FREE = false
+
+local function first_free(lanes)
+  for i = 1, #lanes do
+    if lanes[i] == FREE then
+      return i
+    end
+  end
+  return #lanes + 1
+end
+
+local function lane_targeting(lanes, id)
+  for i = 1, #lanes do
+    if lanes[i] == id then
+      return i
+    end
+  end
+  return nil
+end
+
+-- Assigns each node a rail lane, git-log style. Requires `order` to be
+-- topologically sorted so that every edge points downward.
+--
+-- There is deliberately no `merges` output: because we reuse an already-open
+-- lane rather than allocating a second one, and a node's lane stays open until
+-- the node itself is emitted, two lanes can never target the same node.
+-- Convergence shows up as a split into a pre-existing lane.
+function M.assign_lanes(sub, order, root_id)
+  local lanes, rows = {}, {}
+
+  for _, node in ipairs(order) do
+    -- Claim the lane opened for this node by whichever parent got there first.
+    local lane = lane_targeting(lanes, node)
+    if not lane then
+      lane = first_free(lanes)
+    end
+    lanes[lane] = FREE
+
+    -- Snapshot occupancy before opening child lanes; this is what the renderer
+    -- draws as pass-through rails on this row.
+    local occupancy = {}
+    for i = 1, #lanes do
+      occupancy[i] = lanes[i]
+    end
+
+    local splits = {}
+    for _, child in ipairs(sub.children[node]) do
+      local existing = lane_targeting(lanes, child)
+      if existing then
+        -- Diamond: the child already has a lane from another parent.
+        if existing ~= lane then
+          table.insert(splits, existing)
+        end
+      elseif lanes[lane] == FREE then
+        lanes[lane] = child
+      else
+        local target = first_free(lanes)
+        lanes[target] = child
+        table.insert(splits, target)
+      end
+    end
+
+    while #lanes > 0 and lanes[#lanes] == FREE do
+      table.remove(lanes)
+    end
+
+    table.sort(splits)
+    table.insert(rows, {
+      id = node,
+      lane = lane,
+      lanes = occupancy,
+      splits = splits,
+      depth = sub.depth[node],
+      is_root = (node == root_id),
+    })
+  end
+
+  return rows
+end
+
+-- Composes select -> topo_sort -> assign_lanes into the one call the view
+-- layer needs. Returns both `rows` (the render-ready lane assignments) and
+-- `sub` (the induced subgraph) because a later task needs `sub` too --
+-- e.g. to know real parent/child membership independent of lane geometry.
+function M.build(graph, root_id, up_depth, down_depth)
+  local sub = M.select(graph, root_id, up_depth, down_depth)
+  return M.assign_lanes(sub, M.topo_sort(graph, sub), root_id), sub
+end
+
 return M
