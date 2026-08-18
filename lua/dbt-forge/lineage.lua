@@ -172,6 +172,11 @@ function M.assign_lanes(sub, order, root_id)
       end
     end
 
+    -- Whether this node's own lane still carries an edge on the row below.
+    -- Computed BEFORE the trim below, which can delete the slot outright and
+    -- leave `lanes[lane]` nil -- indistinguishable from occupied under `~=`.
+    local continues = lanes[lane] ~= FREE
+
     while #lanes > 0 and lanes[#lanes] == FREE do
       table.remove(lanes)
     end
@@ -182,6 +187,7 @@ function M.assign_lanes(sub, order, root_id)
       lane = lane,
       lanes = occupancy,
       splits = splits,
+      continues = continues,
       depth = sub.depth[node],
       is_root = (node == root_id),
     })

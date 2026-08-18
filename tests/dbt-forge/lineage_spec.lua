@@ -312,6 +312,31 @@ describe("lineage.assign_lanes", function()
     local rows = by_id(rows_for({ { "a", "b" }, { "a", "c" }, { "b", "d" } }, "a", 0, 2))
     assert.are.equal(1, #rows["d"].lanes)
   end)
+
+  -- `continues` says whether this node's OWN lane still carries an edge on the
+  -- row below it. The renderer cannot derive this from `lanes`, which is the
+  -- occupancy snapshot taken *before* child lanes open — the node's own slot is
+  -- always free there. Without it, a connector cannot tell `|-` (rail carries
+  -- on downward) from `'-` (rail turns away and this lane ends here).
+  it("reports the lane as continuing when a child inherits it", function()
+    local rows = by_id(rows_for({ { "a", "b" } }, "a", 0, 2))
+    assert.is_true(rows["a"].continues)
+  end)
+
+  it("reports the lane as closing when every child already has a lane", function()
+    -- Diamond: c (lane 2) has only child d, which b already opened lane 1 for.
+    -- c therefore hands d nothing and its own lane 2 dies with it.
+    local rows = by_id(rows_for(
+      { { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" } }, "a", 0, 3))
+    assert.are.equal(2, rows["c"].lane)
+    assert.are.same({ 1 }, rows["c"].splits)
+    assert.is_false(rows["c"].continues)
+  end)
+
+  it("reports the lane as closing for a leaf", function()
+    local rows = by_id(rows_for({ { "a", "b" } }, "a", 0, 2))
+    assert.is_false(rows["b"].continues)
+  end)
 end)
 
 describe("lineage.build", function()
