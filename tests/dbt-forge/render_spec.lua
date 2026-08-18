@@ -365,3 +365,139 @@ describe("render.format", function()
     end
   end)
 end)
+
+describe("render.rail_rows", function()
+  local graph_from_edges = require("fixtures.graph_builder")
+
+  -- A diamond exercises every rail feature at once. Lane assignment for
+  -- a -> {b, c}, b -> d, c -> d is:
+  --
+  --   a  lane 1  splits {2}  continues     (opens lane 2 for c)
+  --   b  lane 1              continues     (hands lane 1 to d; c waits in 2)
+  --   c  lane 2  splits {1}  ends          (d already holds lane 1)
+  --   d  lane 1              ends
+  --
+  -- so the rendered band is two lanes wide throughout.
+  local DIAMOND = { { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" } }
+
+  -- Width 10 is deliberate: wide enough for these one-character names, too
+  -- narrow for the "view" materialization tag, so lines carry rails and name
+  -- only and can be asserted verbatim.
+  local WIDTH = 10
+
+  local function lines(edges, root, up, down)
+    local g = graph_from_edges(edges)
+    local lane_rows = lineage.build(g, root, up, down)
+    return texts(g, render.rail_rows(g, lane_rows, root), WIDTH)
+  end
+
+  local function rows_of(edges, root, up, down)
+    local g = graph_from_edges(edges)
+    return render.rail_rows(g, lineage.build(g, root, up, down), root)
+  end
+
+  it("emits one node row per graph node", function()
+    local rows = rows_of({ { "a", "b" }, { "b", "c" } }, "a", 0, 3)
+    local nodes = 0
+    for _, row in ipairs(rows) do
+      if row.kind == "node" then nodes = nodes + 1 end
+    end
+    assert.are.equal(3, nodes)
+  end)
+
+  it("emits no connector rows for a linear chain", function()
+    for _, row in ipairs(rows_of({ { "a", "b" }, { "b", "c" } }, "a", 0, 3)) do
+      assert.are_not.equal("connector", row.kind)
+    end
+  end)
+
+  it("leaves connector rows without an id so line_to_node skips them", function()
+    local connectors = 0
+    for _, row in ipairs(rows_of({ { "a", "b" }, { "a", "c" } }, "a", 0, 2)) do
+      if row.kind == "connector" then
+        connectors = connectors + 1
+        assert.is_nil(row.id)
+      end
+    end
+    assert.are.equal(1, connectors)
+  end)
+
+  it("aligns every node's name at the same column regardless of its lane", function()
+    -- The band is reserved for all lanes, so a lane-1 node and a lane-2 node
+    -- start their names in the same column. This is the whole point of the
+    -- band: under a break-at-lane gutter these two differ by two columns.
+    local out = lines(DIAMOND, "a", 0, 3)
+    assert.are.equal("● │  b", out[3])
+    assert.are.equal("│ ●  c", out[4])
+  end)
+
+  it("draws a pass-through rail for a lane held open to the right of the node", function()
+    -- b sits in lane 1 while c still waits in lane 2. Under a gutter that
+    -- stops at the node's own lane, that rail vanishes from this row.
+    local out = lines(DIAMOND, "a", 0, 3)
+    assert.is_truthy(out[3]:find("│", 1, true), "no pass-through rail on b's row: " .. out[3])
+  end)
+
+  it("opens a rightward split beneath the node's lane", function()
+    local out = lines(DIAMOND, "a", 0, 3)
+    assert.are.equal("├─┐", out[2])
+  end)
+
+  it("turns a leftward merge down into the lane it joins", function()
+    -- c's only child already holds lane 1, so the rail leaves c heading left
+    -- and c's own lane ends: at lane 2 the arm arrives from above and stops.
+    -- Lane 1 is NOT a fresh corner -- d has been waiting there since b's row,
+    -- so that rail arrives from above too and the arm joins it: up+down+right.
+    -- A corner glyph here would draw a break in a rail that never broke.
+    local out = lines(DIAMOND, "a", 0, 3)
+    assert.are.equal("├─┘", out[5])
+  end)
+
+  it("keeps the up-arm when a merge rejoins a lane that is already open", function()
+    -- a opens lane 2 for c, then b (lane 1) finds its only child c already
+    -- waiting there and merges rightward into it. Lane 2's rail has been
+    -- running since a's row, so the junction b merges into carries up, down
+    -- and left -- a tee, not the corner that would start a fresh lane.
+    local out = lines({ { "a", "b" }, { "a", "c" }, { "b", "c" } }, "a", 0, 3)
+    assert.are.equal("└─┤", out[4])
+  end)
+
+  it("passes the arm through an intermediate lane rather than dead-ending on it", function()
+    -- a fans out to three lanes. The arm has to reach lane 3, so at lane 2 it
+    -- turns down AND carries on right: that is a T, not a corner. A corner
+    -- there draws a rail whose horizontal line stops at a glyph that has no
+    -- opening on its right, while the arm visibly continues past it.
+    local out = lines({ { "a", "b" }, { "a", "c" }, { "a", "d" } }, "a", 0, 2)
+    assert.are.equal("├─┬─┐", out[2])
+  end)
+
+  it("crosses a lane the arm passes over without severing it", function()
+    -- a opens lane 2 for c; b (lane 1) then fans out to d and e, and e can
+    -- only go to lane 3 because c still holds lane 2. b's arm therefore has to
+    -- reach *over* lane 2, whose rail runs on down to c below. The crossing
+    -- cell keeps all four arms; anything less cuts c's rail in half.
+    local out = lines({ { "a", "b" }, { "a", "c" }, { "b", "d" }, { "b", "e" } }, "a", 0, 3)
+    assert.are.equal("├─┼─┐", out[4])
+  end)
+
+  it("leaves no trailing whitespace where a connector stops short of the band", function()
+    -- Same graph as above, so the band is three lanes wide, but a's connector
+    -- only spans lanes 1-2 and lane 3 is empty beneath it. Those two columns
+    -- carry nothing and must not be written out as trailing blanks.
+    local out = lines({ { "a", "b" }, { "a", "c" }, { "b", "d" }, { "b", "e" } }, "a", 0, 3)
+    assert.are.equal("├─┐", out[2])
+  end)
+
+  it("keeps drawing lanes that lie outside a connector's own span", function()
+    -- c (lane 2) splits right into lane 3 while z still occupies lane 1.
+    -- The connector spans lanes 2-3 only, but lane 1's rail must survive it.
+    local out = lines(
+      { { "a", "b" }, { "a", "c" }, { "b", "z" }, { "c", "d" }, { "c", "e" } }, "a", 0, 3)
+    local connector
+    for i, text in ipairs(out) do
+      if i > 2 and text:find("┐", 1, true) then connector = text end
+    end
+    assert.is_not_nil(connector, "expected a second split connector")
+    assert.are.equal("│ ├─┐", connector)
+  end)
+end)

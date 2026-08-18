@@ -168,8 +168,8 @@ local function rerender()
     )
     return
   end
-  local sub = lineage.select(graph, state.root_id, state.up, state.down)
-  draw(graph, sub, render.tree_rows(graph, sub, state.root_id))
+  local lane_rows, sub = lineage.build(graph, state.root_id, state.up, state.down)
+  draw(graph, sub, render.rail_rows(graph, lane_rows, state.root_id))
 end
 
 local function node_under_cursor()

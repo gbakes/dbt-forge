@@ -62,6 +62,12 @@ function M.format(graph, row, width)
     local gutter = row.gutter or ""
     local glyph = row.is_root and ROOT_GLYPH or NODE_GLYPH
     local tag = node.materialized
+    -- Rails can sit on BOTH sides of the glyph: the rail renderer reserves a
+    -- band for every lane, so lanes to the right of this node's own lane are
+    -- drawn between the glyph and the name. `rail_tail` carries those columns
+    -- plus the gap before the name, and so subsumes the single separating
+    -- space the tree renderer relies on -- hence the default.
+    local tail = row.rail_tail or " "
 
     spans = {}
     local col = 0
@@ -74,7 +80,13 @@ function M.format(graph, row, width)
 
     -- Glyph is always included (structure, never truncated)
     table.insert(spans, { hl_for(node, row.is_root), col, col + #glyph })
-    col = col + #glyph + 1
+    col = col + #glyph
+
+    -- Right-hand rails are structure too, and never truncated.
+    if #tail > 0 then
+      table.insert(spans, { "DbtForgeLineageRail", col, col + #tail })
+      col = col + #tail
+    end
 
     -- TRUNCATION PRIORITY — never truncate the name to make room for the
     -- tag. The tag is decoration; the name is what identifies the row. The
@@ -84,7 +96,7 @@ function M.format(graph, row, width)
     -- characters shown never decreases, because the name's own branch
     -- (truncated vs. full) depends only on whether the full name fits in
     -- the space after the glyph — not on whether the tag also fits.
-    local used_prefix = utf8_len(gutter) + utf8_len(glyph) + 1  -- gutter + glyph + space
+    local used_prefix = utf8_len(gutter) + utf8_len(glyph) + utf8_len(tail)
     local available = width - used_prefix  -- space after the glyph, for name (+ tag)
     local tag_len = utf8_len(tag)
 
@@ -108,7 +120,7 @@ function M.format(graph, row, width)
 
     table.insert(spans, { hl_for(node, row.is_root), col, col + #name })
 
-    local name_part = gutter .. glyph .. " " .. name
+    local name_part = gutter .. glyph .. tail .. name
     if include_tag then
       -- Right-align the tag at the requested width so materialization
       -- tags form a scannable column across sibling rows. Safe here: the
@@ -185,6 +197,149 @@ function M.tree_rows(graph, sub, root_id)
     walk(root_id, "children", "")
   end
 
+  return rows
+end
+
+-- ---------------------------------------------------------------------------
+-- Phase 2 renderer: the rail graph
+-- ---------------------------------------------------------------------------
+
+local RAIL = "│"
+local ARM = "─"
+local NAME_GAP = "  "
+
+-- Every glyph a connector row can need, keyed by the arms it carries. One
+-- table serves all three kinds of cell -- the node's own column, a lane the
+-- arm turns down into, and a lane the arm merely crosses -- because a junction
+-- is determined by its arms and by nothing else.
+local JUNCTION = {
+  ["up,down,left,right"] = "┼",
+  ["up,down,left"] = "┤",
+  ["up,down,right"] = "├",
+  ["up,down"] = "│",
+  ["up,left,right"] = "┴",
+  ["up,left"] = "┘",
+  ["up,right"] = "└",
+  ["down,left,right"] = "┬",
+  ["down,left"] = "┐",
+  ["down,right"] = "┌",
+  ["left,right"] = "─",
+}
+
+local function junction(up, down, left, right)
+  local arms = {}
+  if up then table.insert(arms, "up") end
+  if down then table.insert(arms, "down") end
+  if left then table.insert(arms, "left") end
+  if right then table.insert(arms, "right") end
+  return JUNCTION[table.concat(arms, ",")] or RAIL
+end
+
+-- The band is as wide as the widest lane the whole graph ever uses, so every
+-- name starts in the same column and a lane's rail runs unbroken from the row
+-- that opens it to the row that consumes it.
+local function band_width(lane_rows)
+  local band = 1
+  for _, row in ipairs(lane_rows) do
+    if row.lane > band then band = row.lane end
+    if #row.lanes > band then band = #row.lanes end
+    for _, lane in ipairs(row.splits) do
+      if lane > band then band = lane end
+    end
+  end
+  return band
+end
+
+-- Rails for a range of lanes as two-column cells. `lead` puts the separator
+-- before each cell rather than after, which is what the right of a glyph needs.
+local function rails(row, from, to, lead)
+  local out = {}
+  for i = from, to do
+    local cell = row.lanes[i] and RAIL or " "
+    if lead then
+      table.insert(out, " ")
+      table.insert(out, cell)
+    else
+      table.insert(out, cell)
+      table.insert(out, " ")
+    end
+  end
+  return table.concat(out)
+end
+
+-- Splits the band around the node's glyph: everything left of it, and
+-- everything right of it plus the gap before the name.
+local function node_rails(row, band)
+  return rails(row, 1, row.lane - 1, false),
+    rails(row, row.lane + 1, band, true) .. NAME_GAP
+end
+
+-- The connector row drawn beneath a node that opens or joins lanes. Its span
+-- covers the node's own lane and every lane it reaches; lanes outside that
+-- span keep their rails, because an edge in flight elsewhere does not stop
+-- being in flight just because this row is busy.
+local function connector_gutter(row, band)
+  local targets = {}
+  local lo, hi = row.lane, row.lane
+  for _, lane in ipairs(row.splits) do
+    targets[lane] = true
+    if lane < lo then lo = lane end
+    if lane > hi then hi = lane end
+  end
+
+  -- The horizontal arm runs unbroken from `lo` to `hi`, so every cell in the
+  -- span has a left arm unless it starts the span and a right arm unless it
+  -- ends it. Only the vertical arms vary by cell.
+  local cells = {}
+  for i = lo, hi do
+    local up, down
+    if i == row.lane then
+      -- The rail always reaches the node's column from above. Whether it also
+      -- leaves below is the one fact the row's geometry cannot supply, which
+      -- is why `assign_lanes` records `continues`.
+      up, down = true, row.continues
+    elseif targets[i] then
+      -- A lane the arm turns down into. If that lane was ALREADY open on this
+      -- row its rail arrives from above as well, and the junction has to say
+      -- so -- a corner glyph here draws a break in a rail that never broke.
+      up, down = row.lanes[i] and true or false, true
+    else
+      -- A lane the arm merely crosses: either open above and below, or empty.
+      up = row.lanes[i] and true or false
+      down = up
+    end
+    table.insert(cells, junction(up, down, i > lo, i < hi))
+    if i < hi then table.insert(cells, ARM) end
+  end
+
+  local text = rails(row, 1, lo - 1, false)
+    .. table.concat(cells)
+    .. rails(row, hi + 1, band, true)
+  return (text:gsub(" +$", ""))
+end
+
+-- Phase 2 renderer: one row per node with its rail band in the gutter, plus a
+-- connector row wherever a node opens or joins lanes. Connector rows carry no
+-- `id`, so line_to_node skips them.
+--
+-- `graph` and `root_id` are taken for signature symmetry with M.tree_rows; the
+-- lane rows already carry every fact this needs.
+function M.rail_rows(graph, lane_rows, root_id)
+  local band = band_width(lane_rows)
+  local rows = {}
+  for _, row in ipairs(lane_rows) do
+    local gutter, tail = node_rails(row, band)
+    table.insert(rows, {
+      kind = "node",
+      id = row.id,
+      gutter = gutter,
+      rail_tail = tail,
+      is_root = row.is_root,
+    })
+    if #row.splits > 0 then
+      table.insert(rows, { kind = "connector", gutter = connector_gutter(row, band) })
+    end
+  end
   return rows
 end
 
