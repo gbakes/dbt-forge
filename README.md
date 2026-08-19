@@ -9,6 +9,7 @@ A Neovim plugin for DBT development. Run, test, and transpile models, and naviga
 - **Transpile Models**: View compiled SQL for both incremental and full-refresh modes
 - **Test Models**: Run `dbt test` on the current model
 - **Goto Definition**: Press `gd` on Jinja references to jump to model files, source definitions, and macro definitions
+- **Model Lineage**: Press `<leader>dl` for a navigable rail graph of everything upstream and downstream of the current model
 - **Auto-detection**: Automatically finds your `dbt_project.yml` and Python environment (pyenv, conda, or venv)
 - **Fast Workflow**: Execute commands without leaving your editor
 
@@ -55,6 +56,14 @@ require("dbt-forge").setup({
     transpile_model = "<leader>dt",
     test_model = "<leader>dT",
     goto_definition = "gd",
+    lineage = "<leader>dl",
+  },
+  lineage = {
+    up_depth = 2,      -- hops upstream to show
+    down_depth = 2,    -- hops downstream to show
+    width = 48,        -- sidebar width in columns
+    follow = true,     -- re-root when you switch model buffers
+    include = { "model", "source", "seed", "snapshot", "exposure" },
   },
   ui = {
     split_size = 15,
@@ -71,6 +80,7 @@ require("dbt-forge").setup({
 | `<leader>dt` | Transpile and show compiled SQL in floating window |
 | `<leader>dT` | Run tests for the current model |
 | `gd` | Go to definition of ref, source, or macro under cursor |
+| `<leader>dl` | Show the lineage graph for the current model |
 
 ## Commands
 
@@ -80,6 +90,7 @@ require("dbt-forge").setup({
 | `:DbtTranspile` | Transpile and show compiled SQL |
 | `:DbtTest` | Run tests for the current model |
 | `:DbtGotoDef` | Go to definition under cursor |
+| `:DbtLineage` | Show lineage for the current model |
 
 ## Goto Definition
 
@@ -93,6 +104,48 @@ Press `gd` with your cursor on a Jinja reference in a dbt SQL file to jump to it
 | Package macro | `{{ dbt_utils.generate_surrogate_key(...) }}` | Macro definition in `dbt_packages/` |
 
 When the cursor is not on a Jinja reference, `gd` falls back to the default Vim behavior.
+
+## Model Lineage
+
+Press `<leader>dl` in a model to open a lineage sidebar — a vertical rail graph
+of the model's ancestors and descendants, read straight from
+`target/manifest.json`.
+
+```
+●        raw_customers                      seed
+│ ●      raw_orders                         seed
+│ │ ●    raw_payments                       seed
+│ │ │ ●  stg_customer_status                view
+● │ │ │  stg_customers                      view
+└─┼─┼─┤
+  ● │ │  stg_orders                         view
+  └─┼─┤
+    ● │  stg_payments                       view
+    └─┤
+      ◉  customers                         table
+```
+
+The current model is `◉`; every other node is `●`. Each rail is one dependency
+in flight, and it runs unbroken from the row that opens it to the row that
+consumes it — so the gutter widens with the graph rather than the lines getting
+longer.
+
+| Key | Action |
+|-----|--------|
+| `<CR>` | Open the model under the cursor |
+| `o` | Open it, but keep focus in the sidebar |
+| `r` | Re-root the graph on the node under the cursor |
+| `+` / `-` | Widen or narrow the depth shown |
+| `R` | Run `dbt parse` and reload the manifest |
+| `q` / `<ESC>` | Close |
+
+Models, sources, seeds, snapshots and exposures are shown; tests and macros are
+not. Ephemeral models are included and marked, since they are real links in the
+dependency chain.
+
+The graph comes from `target/manifest.json`, so it reflects the last time dbt
+parsed your project — the sidebar shows the manifest's age, and `R` refreshes
+it.
 
 ## Auto-detection
 
