@@ -13,18 +13,40 @@ local HIGHLIGHTS = {
   DbtForgeLineageNode = "Normal",
   DbtForgeLineageRoot = "Title",
   DbtForgeLineageSource = "Constant",
-  DbtForgeLineageEphemeral = "Special",
   DbtForgeLineageMaterialization = "Comment",
   DbtForgeLineageHeader = "Statement",
   DbtForgeLineageStale = "WarningMsg",
 }
 
+-- Ephemeral is the one group that needs an attribute of its own, and a link
+-- cannot carry one: `nvim_set_hl` resolves a linked group to the target's
+-- attributes ALONE, so an `italic` passed alongside `link` never reaches the
+-- screen. (Worse, passing it as a second `default = true` call is a plain
+-- no-op, because the loop above has already defined the group.) So derive
+-- Special's resolved attributes and add italic to them.
+--
+-- That costs the link's automatic colorscheme tracking, hence the hook below.
+-- A user overriding this group should do it from a ColorScheme autocmd of
+-- their own, since a plain `:highlight` would be re-derived out from under
+-- them on the next colorscheme change.
+local function derive_ephemeral()
+  local special = vim.api.nvim_get_hl(0, { name = "Special", link = false })
+  vim.api.nvim_set_hl(
+    0,
+    "DbtForgeLineageEphemeral",
+    vim.tbl_extend("force", special, { italic = true })
+  )
+end
+
 local function ensure_highlights()
   for group, link in pairs(HIGHLIGHTS) do
     vim.api.nvim_set_hl(0, group, { link = link, default = true })
   end
-  vim.api.nvim_set_hl(0, "DbtForgeLineageEphemeral", {
-    link = "Special", italic = true, default = true,
+  derive_ephemeral()
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = vim.api.nvim_create_augroup("DbtForgeLineageHighlights", { clear = true }),
+    callback = derive_ephemeral,
+    desc = "Re-derive the ephemeral lineage highlight from the new colorscheme",
   })
 end
 

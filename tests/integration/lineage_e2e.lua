@@ -127,6 +127,32 @@ check(
 )
 check(contains(vim.wo[sidebar_win].winbar, "↑2 ↓2"), "winbar missing depths")
 
+-- Ephemeral models must be italicised, and must still take their colour from
+-- the colorscheme's Special. This resolves the highlight the way a UI does
+-- (link = false), because a `link` in nvim_set_hl resolves to the target's
+-- attributes alone -- an italic passed alongside it never reaches the screen.
+local eph = vim.api.nvim_get_hl(0, { name = "DbtForgeLineageEphemeral", link = false })
+local special = vim.api.nvim_get_hl(0, { name = "Special", link = false })
+check(eph.italic == true, "ephemeral highlight is not italic: " .. vim.inspect(eph))
+check(
+  eph.fg == special.fg,
+  "ephemeral highlight lost Special's colour: " .. vim.inspect(eph) .. " vs " .. vim.inspect(special)
+)
+
+-- A colorscheme change must re-derive it. A link would have tracked the new
+-- colorscheme for free; a derived definition only does so if something hooks
+-- ColorScheme, and a stale colour here would be a regression, not a nitpick.
+vim.cmd("colorscheme habamax")
+local eph_after = vim.api.nvim_get_hl(0, { name = "DbtForgeLineageEphemeral", link = false })
+local special_after = vim.api.nvim_get_hl(0, { name = "Special", link = false })
+check(eph_after.italic == true, "ephemeral lost italic after a colorscheme change")
+check(
+  eph_after.fg == special_after.fg,
+  "ephemeral colour went stale after a colorscheme change: "
+    .. vim.inspect(eph_after) .. " vs Special " .. vim.inspect(special_after)
+)
+check(special_after.fg ~= special.fg, "test is vacuous: habamax's Special matches the default's")
+
 -- `-` narrows to one hop each way, which must drop the two-hop source.
 vim.api.nvim_set_current_win(sidebar_win)
 vim.api.nvim_feedkeys("-", "x", false)
