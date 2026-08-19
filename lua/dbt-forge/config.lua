@@ -9,6 +9,14 @@ M.defaults = {
     transpile_model = "<leader>dt",
     test_model = "<leader>dT",
     goto_definition = "gd",
+    lineage = "<leader>dl",
+  },
+  lineage = {
+    up_depth = 2,
+    down_depth = 2,
+    width = 48,
+    follow = true,
+    include = { "model", "source", "seed", "snapshot", "exposure" },
   },
   ui = {
     split_size = 15,

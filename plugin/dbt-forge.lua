@@ -27,3 +27,7 @@ vim.api.nvim_create_user_command("DbtGotoDef", function()
 end, {
   desc = "Go to definition of dbt ref/source/macro under cursor",
 })
+
+vim.api.nvim_create_user_command("DbtLineage", function()
+  require("dbt-forge").show_lineage()
+end, { desc = "Show dbt model lineage" })
