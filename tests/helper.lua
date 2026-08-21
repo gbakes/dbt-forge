@@ -112,12 +112,21 @@ end
 -- from config.defaults into config.options, so the second setup() call in a
 -- test run would see the first call's values.
 -- Matches Neovim's semantics: recurse into map-like tables, replace list-like tables wholesale.
+-- Mirrors Neovim's own `can_merge`: a table is mergeable when it is map-like
+-- OR EMPTY. The empty case matters and is easy to get wrong -- `is_list({})` is
+-- true, so treating list-likeness alone as the test would REPLACE on an empty
+-- sub-table where real Neovim merges and preserves the defaults. Getting that
+-- backwards makes every config spec here assert behaviour the plugin does not
+-- have, while staying green.
+local function can_merge(v)
+  return type(v) == "table" and (next(v) == nil or not is_list(v))
+end
+
 vim.tbl_deep_extend = vim.tbl_deep_extend or function(_, ...)
   local out = {}
   local function merge(dst, src)
     for k, v in pairs(src) do
-      -- Only recurse into map-like tables; replace list-like tables wholesale
-      if type(v) == "table" and type(dst[k]) == "table" and not is_list(v) and not is_list(dst[k]) then
+      if can_merge(v) and can_merge(dst[k]) then
         merge(dst[k], v)
       else
         dst[k] = deepcopy(v)

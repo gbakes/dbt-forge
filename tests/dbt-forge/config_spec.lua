@@ -81,6 +81,24 @@ describe("config", function()
       assert.are.equal(48, config.options.lineage.width)
     end)
 
+    -- Real Neovim's tbl_deep_extend treats an EMPTY table as mergeable, so
+    -- passing `keymaps = {}` leaves the defaults intact. The stub in
+    -- tests/helper.lua has to agree: if it replaced instead, every config spec
+    -- here would be asserting behaviour the plugin does not actually have.
+    it("keeps default keymaps when handed an empty keymaps table", function()
+      config.setup({ dbt_project_path = "/test/path", keymaps = {} })
+      assert.are.equal("<leader>dr", config.options.keymaps.run_model)
+      assert.are.equal("<leader>dl", config.options.keymaps.lineage)
+    end)
+
+    it("still replaces a list-like table wholesale rather than merging by index", function()
+      -- The other half of the same rule, and the reason the stub cannot simply
+      -- merge everything: a narrowed include list must not keep the defaults'
+      -- trailing entries.
+      config.setup({ dbt_project_path = "/test/path", lineage = { include = { "model" } } })
+      assert.are.same({ "model" }, config.options.lineage.include)
+    end)
+
     it("presents as a split by default", function()
       config.setup({ dbt_project_path = "/test/path" })
       assert.are.equal("split", config.options.lineage.presentation)
