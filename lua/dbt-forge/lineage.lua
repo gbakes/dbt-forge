@@ -14,9 +14,18 @@ function M.select(graph, root_id, up_depth, down_depth)
       local next_frontier = {}
       for _, id in ipairs(frontier) do
         for _, neighbour in ipairs(map[id] or {}) do
-          local d = sign * hop
-          if depth[neighbour] == nil or math.abs(d) < math.abs(depth[neighbour]) then
-            depth[neighbour] = d
+          -- First visit wins, and that is already the minimum: the frontier
+          -- advances one hop at a time, so a node is reached at its shortest
+          -- distance before any longer path to it is considered.
+          --
+          -- An earlier version also re-assigned on a smaller absolute depth.
+          -- That branch could not fire. Within one direction, hop order rules
+          -- it out; across the two directions it would need a node that is
+          -- both an ancestor and a descendant of the root, which is a cycle,
+          -- and dbt rejects those at parse time. Deleting it left the suite
+          -- green, which is what exposed the two specs below as misnamed.
+          if depth[neighbour] == nil then
+            depth[neighbour] = sign * hop
             table.insert(next_frontier, neighbour)
           end
         end

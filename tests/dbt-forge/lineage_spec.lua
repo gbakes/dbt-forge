@@ -51,16 +51,20 @@ describe("lineage.select", function()
     assert.are.same({}, sub.parents["model.jaffle_shop.stg_orders"])
   end)
 
-  it("keeps the smaller absolute depth when a diamond reaches a node twice", function()
+  it("reaches a diamond's shared ancestor at its shorter hop count", function()
     local g = graph_from_edges({ { "a", "b" }, { "b", "c" }, { "a", "c" } })
     local sub = lineage.select(g, "c", 3, 0)
     assert.are.equal(-1, sub.depth["a"])
   end)
 
-  it("keeps the smaller absolute depth in a downstream diamond", function()
-    local g = graph_from_edges({ { "a", "b" }, { "a", "c" }, { "b", "d" }, { "c", "d" } })
+  it("reaches a diamond's shared descendant at its shorter hop count", function()
+    -- c is reachable in one hop directly and in two via b. The one-hop
+    -- distance must win. The obvious fixture for this -- a -> {b, c},
+    -- {b, c} -> d -- proves nothing: d sits two hops away by every possible
+    -- traversal order, so no assertion about it can fail.
+    local g = graph_from_edges({ { "a", "b" }, { "b", "c" }, { "a", "c" } })
     local sub = lineage.select(g, "a", 0, 3)
-    assert.are.equal(2, sub.depth["d"])
+    assert.are.equal(1, sub.depth["c"])
   end)
 
   it("maintains parent/child symmetry in induced subgraph", function()
