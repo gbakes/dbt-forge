@@ -81,6 +81,28 @@ describe("config", function()
       assert.are.equal(48, config.options.lineage.width)
     end)
 
+    it("presents as a split by default", function()
+      config.setup({ dbt_project_path = "/test/path" })
+      assert.are.equal("split", config.options.lineage.presentation)
+    end)
+
+    it("defaults the float to most of the editor, not all of it", function()
+      config.setup({ dbt_project_path = "/test/path" })
+      assert.are.equal(0.9, config.options.lineage.float.width_ratio)
+      assert.are.equal(0.8, config.options.lineage.float.height_ratio)
+    end)
+
+    it("lets the user ask for a float as wide as the editor", function()
+      config.setup({
+        dbt_project_path = "/test/path",
+        lineage = { presentation = "float", float = { width_ratio = 1.0 } },
+      })
+      assert.are.equal("float", config.options.lineage.presentation)
+      assert.are.equal(1.0, config.options.lineage.float.width_ratio)
+      -- The untouched ratio must survive the merge rather than going nil.
+      assert.are.equal(0.8, config.options.lineage.float.height_ratio)
+    end)
+
     it("lets the user narrow the include list to specific resource types", function()
       config.setup({ dbt_project_path = "/test/path", lineage = { include = { "model" } } })
       assert.are.same({ "model" }, config.options.lineage.include)
