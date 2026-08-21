@@ -343,4 +343,37 @@ function M.rail_rows(graph, lane_rows, root_id)
   return rows
 end
 
+-- The width this graph actually needs, laid out in full. A float can be far
+-- wider than that, and laying out to the window instead would strand every
+-- materialization tag a hundred columns from its name. Measured in characters,
+-- not bytes: rails and glyphs are 3-byte UTF-8, and a byte count would ask for
+-- roughly triple the band width nothing needs.
+--
+-- Mirrors M.format's own arithmetic, including its `" "` default for a row
+-- with no rail_tail, so the two cannot disagree about what a row costs.
+function M.natural_width(graph, rows)
+  local widest = 1
+  for _, row in ipairs(rows) do
+    local w
+    if row.kind == "node" then
+      local node = graph.nodes[row.id]
+      local glyph = row.is_root and ROOT_GLYPH or NODE_GLYPH
+      w = utf8_len(row.gutter or "")
+        + utf8_len(glyph)
+        + utf8_len(row.rail_tail or " ")
+        + utf8_len(node.name)
+        + 1
+        + utf8_len(node.materialized)
+    elseif row.kind == "header" then
+      w = utf8_len(row.text)
+    else
+      w = utf8_len(row.gutter or "")
+    end
+    if w > widest then
+      widest = w
+    end
+  end
+  return widest
+end
+
 return M

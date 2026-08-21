@@ -81,6 +81,46 @@ describe("config", function()
       assert.are.equal(48, config.options.lineage.width)
     end)
 
+    -- Real Neovim's tbl_deep_extend treats an EMPTY table as mergeable, so
+    -- passing `keymaps = {}` leaves the defaults intact. The stub in
+    -- tests/helper.lua has to agree: if it replaced instead, every config spec
+    -- here would be asserting behaviour the plugin does not actually have.
+    it("keeps default keymaps when handed an empty keymaps table", function()
+      config.setup({ dbt_project_path = "/test/path", keymaps = {} })
+      assert.are.equal("<leader>dr", config.options.keymaps.run_model)
+      assert.are.equal("<leader>dl", config.options.keymaps.lineage)
+    end)
+
+    it("still replaces a list-like table wholesale rather than merging by index", function()
+      -- The other half of the same rule, and the reason the stub cannot simply
+      -- merge everything: a narrowed include list must not keep the defaults'
+      -- trailing entries.
+      config.setup({ dbt_project_path = "/test/path", lineage = { include = { "model" } } })
+      assert.are.same({ "model" }, config.options.lineage.include)
+    end)
+
+    it("presents as a split by default", function()
+      config.setup({ dbt_project_path = "/test/path" })
+      assert.are.equal("split", config.options.lineage.presentation)
+    end)
+
+    it("defaults the float to most of the editor, not all of it", function()
+      config.setup({ dbt_project_path = "/test/path" })
+      assert.are.equal(0.9, config.options.lineage.float.width_ratio)
+      assert.are.equal(0.8, config.options.lineage.float.height_ratio)
+    end)
+
+    it("lets the user ask for a float as wide as the editor", function()
+      config.setup({
+        dbt_project_path = "/test/path",
+        lineage = { presentation = "float", float = { width_ratio = 1.0 } },
+      })
+      assert.are.equal("float", config.options.lineage.presentation)
+      assert.are.equal(1.0, config.options.lineage.float.width_ratio)
+      -- The untouched ratio must survive the merge rather than going nil.
+      assert.are.equal(0.8, config.options.lineage.float.height_ratio)
+    end)
+
     it("lets the user narrow the include list to specific resource types", function()
       config.setup({ dbt_project_path = "/test/path", lineage = { include = { "model" } } })
       assert.are.same({ "model" }, config.options.lineage.include)

@@ -61,7 +61,13 @@ require("dbt-forge").setup({
   lineage = {
     up_depth = 2,      -- hops upstream to show
     down_depth = 2,    -- hops downstream to show
-    width = 48,        -- sidebar width in columns
+    presentation = "split",  -- "split" sidebar, or "float"
+    width = 48,        -- sidebar width in columns (split only)
+    float = {
+      width_ratio = 0.9,   -- fraction of the editor; 1.0 = full width
+      height_ratio = 0.8,
+      border = nil,        -- falls back to ui.float_border
+    },
     follow = true,     -- re-root when you switch model buffers
     include = { "model", "source", "seed", "snapshot", "exposure" },
   },
@@ -146,6 +152,33 @@ dependency chain.
 The graph comes from `target/manifest.json`, so it reflects the last time dbt
 parsed your project — the sidebar shows the manifest's age, and `R` refreshes
 it.
+
+### Split or float
+
+By default the graph opens as a persistent sidebar on the left, which keeps your
+code visible beside it. Set `lineage.presentation = "float"` to get the same
+graph in a floating window instead, sized by `float.width_ratio` — `1.0` makes it
+as wide as Neovim.
+
+Width matters more than it sounds. Each concurrent dependency needs its own rail,
+so a model with two dozen children needs roughly fifty columns of gutter before
+any name is drawn — more than a 48-column sidebar has. In a 48-column split that
+graph is a wall of rails with no names at all; in a full-width float every name
+fits:
+
+```lua
+lineage = {
+  presentation = "float",
+  float = { width_ratio = 1.0 },
+}
+```
+
+Rows are laid out to whatever the graph actually needs, never to the window, so a
+wide float does not strand materialization tags against its far edge.
+
+One key behaves differently in a float: `<CR>` closes it before opening the
+model, since you cannot read a buffer underneath a full-width window. `o` still
+opens the model behind the float and keeps your place in the graph.
 
 ## Auto-detection
 

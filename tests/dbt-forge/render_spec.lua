@@ -501,3 +501,55 @@ describe("render.rail_rows", function()
     assert.are.equal("│ ├─┐", connector)
   end)
 end)
+
+describe("render.natural_width", function()
+  local graph_from_edges = require("fixtures.graph_builder")
+
+  -- The width a graph actually needs, so a float wider than that does not
+  -- right-align materialization tags a hundred columns from their names.
+  it("measures the widest row: band, glyph, name, gap and tag", function()
+    local g = graph_from_edges({ { "a", "bbbbbbbb" } })
+    -- Single lane, so band 1: gutter "" + glyph 1 + tail 2 = 3 prefix.
+    -- Widest name is "bbbbbbbb" (8), tag "view" (4), one space between.
+    assert.are.equal(3 + 8 + 1 + 4, render.natural_width(g, render.rail_rows(
+      g, lineage.build(g, "a", 0, 1), "a")))
+  end)
+
+  it("grows with the rail band, not just with the name", function()
+    local narrow = graph_from_edges({ { "a", "b" } })
+    local wide = graph_from_edges({ { "a", "b" }, { "a", "c" }, { "a", "d" } })
+    local function nat(g, root, down)
+      return render.natural_width(g, render.rail_rows(g, lineage.build(g, root, 0, down), root))
+    end
+    -- Same one-character names either side; only the lane count differs.
+    assert.is_true(nat(wide, "a", 1) > nat(narrow, "a", 1))
+  end)
+
+  it("counts characters rather than bytes in the multibyte band", function()
+    -- Rails and glyphs are 3-byte UTF-8. A byte count would roughly triple
+    -- the band's contribution and hand a float a width nothing needs.
+    local g = graph_from_edges({ { "a", "b" }, { "a", "c" } })
+    local rows = render.rail_rows(g, lineage.build(g, "a", 0, 1), "a")
+    local width = render.natural_width(g, rows)
+    -- band 2 -> prefix 5 ("● │" + 2 gap), name 1, gap 1, tag 4 = 11.
+    assert.are.equal(11, width)
+  end)
+
+  it("counts the left gutter when the widest row is not in lane 1", function()
+    -- "cccccccccc" sorts after "b", so it lands in lane 2 and its row carries
+    -- a two-column left gutter that lane-1 rows do not. Measuring only the
+    -- right of the glyph undercounts precisely the widest row.
+    local g = graph_from_edges({ { "a", "b" }, { "a", "cccccccccc" } })
+    local rows = render.rail_rows(g, lineage.build(g, "a", 0, 1), "a")
+    -- gutter 2 + glyph 1 + tail 2 + name 10 + gap 1 + tag 4
+    assert.are.equal(2 + 1 + 2 + 10 + 1 + 4, render.natural_width(g, rows))
+  end)
+
+  it("covers header rows from the tree renderer", function()
+    -- "▼ DOWNSTREAM" is 12 characters and carries no tag; a graph of
+    -- one-character names must still be wide enough to show it.
+    local g = graph_from_edges({ { "a", "b" } })
+    local sub = lineage.select(g, "a", 0, 1)
+    assert.is_true(render.natural_width(g, render.tree_rows(g, sub, "a")) >= 12)
+  end)
+end)

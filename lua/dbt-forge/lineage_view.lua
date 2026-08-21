@@ -108,6 +108,36 @@ local function watch_for_staleness(win, buf)
   })
 end
 
+local function is_float()
+  return config.options.lineage.presentation == "float"
+end
+
+-- Geometry for the floating presentation, centred on the editor.
+--
+-- `nvim_open_win`'s width/height exclude the border, so a border costs two
+-- columns and two rows on top of whatever is asked for. Subtracting that up
+-- front is what lets width_ratio = 1.0 mean "as wide as Neovim" instead of
+-- overflowing the editor by two columns. `lines - 2` leaves the command line
+-- and the global statusline alone.
+local function float_geometry()
+  local opts = config.options.lineage.float
+  local border = opts.border or config.options.ui.float_border
+  local frame = (border and border ~= "none") and 2 or 0
+
+  local avail_w, avail_h = vim.o.columns, vim.o.lines - 2
+  local width = math.max(1, math.floor(avail_w * opts.width_ratio) - frame)
+  local height = math.max(1, math.floor(avail_h * opts.height_ratio) - frame)
+
+  return {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.max(0, math.floor((avail_h - (height + frame)) / 2)),
+    col = math.max(0, math.floor((avail_w - (width + frame)) / 2)),
+    border = border,
+  }
+end
+
 local function age_label(mtime)
   local seconds = os.time() - mtime
   if seconds < 90 then
@@ -118,8 +148,19 @@ local function age_label(mtime)
   return string.format("%dh old", math.floor(seconds / 3600))
 end
 
+-- How wide to lay the rows out. The split is a fixed column count, so it
+-- lays out to exactly that. A float is usually wider than the graph needs,
+-- and laying out to the window would right-align every materialization tag
+-- against the far edge, so it lays out to whichever is smaller.
+local function layout_width(graph, rows)
+  if not is_float() then
+    return config.options.lineage.width
+  end
+  return math.min(vim.api.nvim_win_get_width(state.win), render.natural_width(graph, rows))
+end
+
 local function draw(graph, sub, rows)
-  local width = config.options.lineage.width
+  local width = layout_width(graph, rows)
   local lines, all_spans = {}, {}
   state.line_to_node = {}
 
@@ -278,10 +319,23 @@ end
 -- focus to the sidebar when `keep_focus` is set. Reports (rather than
 -- crashing on) a failed `:edit` — e.g. E37 on a modified buffer — so a
 -- failed peek is never silent.
+-- Gets us to the window the file should open into. For a float that is about
+-- to be dismissed, closing it IS the switch: Neovim hands focus back to the
+-- window underneath, so there is no `wincmd p` dance and no vsplit fallback
+-- to get wrong. A kept-focus peek (`o`) has to leave the float up, so it
+-- takes the normal path.
+local function switch_to_editing_window(keep_focus)
+  if is_float() and not keep_focus then
+    M.close()
+    return
+  end
+  vim.api.nvim_set_current_win(target_window())
+end
+
 local function open_in_previous(path, line, keep_focus)
   local ok, err = with_follow_suppressed(
     keep_focus,
-    function() vim.api.nvim_set_current_win(target_window()) end,
+    function() switch_to_editing_window(keep_focus) end,
     function() vim.cmd("edit " .. vim.fn.fnameescape(path)) end
   )
   if not ok then
@@ -406,12 +460,15 @@ function M.open(root_id)
 
   local previous = vim.api.nvim_get_current_win()
 
-  vim.cmd("topleft vsplit")
-  state.win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_width(state.win, config.options.lineage.width)
-
   state.buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_win_set_buf(state.win, state.buf)
+  if is_float() then
+    state.win = vim.api.nvim_open_win(state.buf, true, float_geometry())
+  else
+    vim.cmd("topleft vsplit")
+    state.win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_width(state.win, config.options.lineage.width)
+    vim.api.nvim_win_set_buf(state.win, state.buf)
+  end
   watch_for_staleness(state.win, state.buf)
 
   vim.api.nvim_buf_set_option(state.buf, "buftype", "nofile")
@@ -422,7 +479,11 @@ function M.open(root_id)
   vim.api.nvim_win_set_option(state.win, "number", false)
   vim.api.nvim_win_set_option(state.win, "relativenumber", false)
   vim.api.nvim_win_set_option(state.win, "cursorline", true)
-  vim.api.nvim_win_set_option(state.win, "winfixwidth", true)
+  if not is_float() then
+    -- Only meaningful for a real split; a float has no neighbours to be
+    -- resized by.
+    vim.api.nvim_win_set_option(state.win, "winfixwidth", true)
+  end
   vim.api.nvim_win_set_option(state.win, "signcolumn", "no")
 
   set_keymaps()
